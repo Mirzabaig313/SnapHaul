@@ -40,6 +40,26 @@ let package = Package(
             publicHeadersPath: "include"
         ),
 
+        // Native MTP protocol stack — container framing, bulk transfer, session management
+        .target(
+            name: "CMTPCore",
+            path: "Sources/CMTPCore",
+            publicHeadersPath: "include",
+            cSettings: [
+                .unsafeFlags([
+                    "-I/opt/homebrew/opt/libusb/include/libusb-1.0",
+                    "-I/usr/local/opt/libusb/include/libusb-1.0"
+                ])
+            ],
+            linkerSettings: [
+                .linkedLibrary("usb-1.0"),
+                .unsafeFlags([
+                    "-L/opt/homebrew/opt/libusb/lib",
+                    "-L/usr/local/opt/libusb/lib"
+                ])
+            ]
+        ),
+
         // Shared framework — models, protocols, utilities
         .target(
             name: "SnapHaulKit",
@@ -56,7 +76,8 @@ let package = Package(
             dependencies: [
                 "SnapHaulKit",
                 "CLibMTP",
-                "CTransferUtils"
+                "CTransferUtils",
+                "CMTPCore"
             ],
             path: "Sources/App",
             resources: [

@@ -37,19 +37,19 @@ actor TransferCoordinator {
 
     /// Update concurrency and QoS based on power state.
     func updatePowerSettings(isOnBattery: Bool, isAppForeground: Bool) {
-        maxConcurrentStreams = isOnBattery ? 2 : 4
-        progressUpdateInterval = isOnBattery ? 5 : 1
+        maxConcurrentStreams = isOnBattery ? 3 : 4
+        progressUpdateInterval = isOnBattery ? 3 : 1
         currentQoS = resolveQoS(isOnBattery: isOnBattery, isAppForeground: isAppForeground)
         logger.info("Power settings: concurrency=\(self.maxConcurrentStreams), QoS=\(String(describing: self.currentQoS))")
     }
 
     private func resolveQoS(isOnBattery: Bool, isAppForeground: Bool) -> DispatchQoS.QoSClass {
-        if !isAppForeground { return .background }
+        if !isAppForeground { return .utility }
         return isOnBattery ? .utility : .userInitiated
     }
 
     private func concurrencyLimit(for engine: any TransferEngine) -> Int {
-        engine is MTPEngine ? 1 : maxConcurrentStreams
+        (engine is MTPEngine || engine is MTPNativeEngine) ? 1 : maxConcurrentStreams
     }
 
     private let maxRetries = 3
@@ -88,15 +88,6 @@ actor TransferCoordinator {
             at: destinationBase,
             withIntermediateDirectories: true
         )
-
-        // Use pipelined batch transfer for MTP (pre-resolves all object IDs upfront)
-        if let mtpEngine = engine as? MTPEngine, totalFiles > 1 {
-            return try await transferFilesPipelined(
-                files, using: mtpEngine, to: destinationBase,
-                profileName: profileName, totalBytes: totalBytes,
-                startTime: startTime, progressHandler: progressHandler
-            )
-        }
 
         let concurrency = concurrencyLimit(for: engine)
 
@@ -158,127 +149,6 @@ actor TransferCoordinator {
 
         let duration = Date().timeIntervalSince(startTime)
         logger.info("Transfer complete: \(self.completedFiles)/\(totalFiles) in \(String(format: "%.1f", duration))s")
-
-        enableSpotlightIndexing()
-
-        return TransferSummary(
-            totalFiles: totalFiles,
-            completedFiles: completedFiles,
-            failedFiles: errors.count,
-            totalBytesTransferred: transferredBytes,
-            duration: duration,
-            errors: errors
-        )
-    }
-
-    /// Pipelined MTP transfer: resolves all object IDs upfront, then pulls sequentially.
-    /// Eliminates per-file USB round-trip for path resolution (~1-3 ms × N files saved).
-    private func transferFilesPipelined(
-        _ files: [FileItem],
-        using engine: MTPEngine,
-        to destinationBase: URL,
-        profileName: String,
-        totalBytes: UInt64,
-        startTime: Date,
-        progressHandler: @escaping @Sendable (TransferProgress) -> Void
-    ) async throws -> TransferSummary {
-        let totalFiles = files.count
-
-        // Pipelined pull with retry per file
-        let objectIDMap = await engine.resolveObjectIDs(for: files.map { $0.path })
-        logger.info("MTP pipeline: resolved \(objectIDMap.count)/\(totalFiles) object IDs")
-
-        for file in files {
-            while isPaused {
-                try? await Task.sleep(nanoseconds: 100_000_000)
-            }
-            if isCancelled { break }
-
-            let destinationURL = destinationBase.appendingPathComponent(file.name)
-
-            guard let objectID = objectIDMap[file.path] else {
-                if errors.count < Self.maxErrorsRetained {
-                    errors.append(TransferError(
-                        filePath: file.path,
-                        message: "Could not resolve MTP object ID",
-                        isRetryable: false,
-                        attemptCount: 1
-                    ))
-                }
-                completedFiles += 1
-                continue
-            }
-
-            var success = false
-            for attempt in 1...maxRetries {
-                do {
-                    let fileStart = Date()
-                    let bytesWritten = try await engine.pullFileByID(
-                        objectID: objectID, to: destinationURL, progress: nil
-                    )
-
-                    setNoCacheFlag(at: destinationURL)
-                    suppressSpotlightIndexing(at: destinationURL)
-
-                    transferredBytes += bytesWritten
-                    completedFiles += 1
-                    success = true
-
-                    // Throughput calibration
-                    if !isCalibrated && bytesWritten > 0 {
-                        let elapsed = Date().timeIntervalSince(fileStart)
-                        if elapsed > 0.01 && throughputSamples.count < 3 {
-                            throughputSamples.append(Double(bytesWritten) / elapsed)
-                            if throughputSamples.count == 3 {
-                                calibratedThroughput = throughputSamples.reduce(0, +) / 3.0
-                                logger.info("Throughput calibrated: \(String(format: "%.1f", self.calibratedThroughput / 1_000_000)) MB/s")
-                            }
-                        }
-                    }
-                    break
-                } catch {
-                    try? FileManager.default.removeItem(at: destinationURL)
-                    if attempt < maxRetries {
-                        let delay = baseRetryDelay * UInt64(1 << (attempt - 1))
-                        try? await Task.sleep(nanoseconds: delay)
-                    }
-                }
-            }
-
-            if !success {
-                completedFiles += 1
-                if errors.count < Self.maxErrorsRetained {
-                    errors.append(TransferError(
-                        filePath: file.path,
-                        message: "Max retries exceeded",
-                        isRetryable: false,
-                        attemptCount: maxRetries
-                    ))
-                }
-            }
-
-            // Progress reporting
-            let elapsed = Date().timeIntervalSince(startTime)
-            let bytesPerSecond = elapsed > 0 ? UInt64(Double(transferredBytes) / elapsed) : 0
-            let shouldReport = completedFiles % progressUpdateInterval == 0 || completedFiles == totalFiles
-            if shouldReport {
-                progressHandler(TransferProgress(
-                    profileName: profileName,
-                    totalFiles: totalFiles,
-                    completedFiles: completedFiles,
-                    totalBytes: totalBytes,
-                    transferredBytes: transferredBytes,
-                    currentFileName: file.name,
-                    currentFileProgress: 1.0,
-                    bytesPerSecond: bytesPerSecond,
-                    startTime: startTime,
-                    errors: errors
-                ))
-            }
-        }
-
-        let duration = Date().timeIntervalSince(startTime)
-        logger.info("MTP pipeline complete: \(self.completedFiles)/\(totalFiles) in \(String(format: "%.1f", duration))s")
 
         enableSpotlightIndexing()
 

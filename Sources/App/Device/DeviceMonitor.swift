@@ -22,7 +22,7 @@ final class DeviceMonitor: @unchecked Sendable {
     )
 
     /// Called on the main thread when an Android device is connected.
-    var onDeviceConnected: ((DeviceState) -> Void)?
+    var onDeviceConnected: ((USBDevice) -> Void)?
     var onDeviceDisconnected: ((String) -> Void)?
 
     private var notificationPort: IONotificationPortRef?
@@ -328,18 +328,8 @@ final class DeviceMonitor: @unchecked Sendable {
             "Android device connected: \(device.displayName) [\(device.manufacturer)] vendor:0x\(vendorHex) mode:\(device.usbMode.rawValue) speed:\(device.usbSpeed.description)"
         )
 
-        let deviceState = DeviceState(
-            serialNumber: device.serialNumber,
-            displayName: "\(device.manufacturer) \(device.displayName)",
-            manufacturer: device.manufacturer,
-            model: device.displayName,
-            connectionStatus: .connected,
-            engineType: .mtp,
-            usbSpeedDescription: device.usbSpeed.description
-        )
-
         DispatchQueue.main.async { [weak self] in
-            self?.onDeviceConnected?(deviceState)
+            self?.onDeviceConnected?(device)
         }
     }
 

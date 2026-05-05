@@ -7,13 +7,6 @@ import Foundation
 import SnapHaulKit
 import os
 
-/// Selects the optimal transfer engine based on device state and user preference.
-///
-/// Selection logic:
-/// 1. If user prefers ADB and device has USB Debugging → ADB
-/// 2. If device is in MTP mode → MTP
-/// 3. If device is in PTP mode → MTP (PTP subset)
-/// 4. If MTP fails 3 consecutive times → suggest ADB
 struct EngineSelector {
 
     private let logger = Logger(
@@ -21,7 +14,6 @@ struct EngineSelector {
         category: "engine-selector"
     )
 
-    /// Select the best engine for the given device.
     func selectEngine(
         for device: USBDevice,
         userPreference: String,
@@ -33,11 +25,23 @@ struct EngineSelector {
         }
 
         if adbAvailable && userPreference == "auto" && device.usbMode == .adb {
-            logger.info("Selected ADB engine (auto, device in ADB mode) for \(device.displayName)")
+            logger.info("Selected ADB engine (device in ADB mode) for \(device.displayName)")
             return ADBEngine()
         }
 
-        logger.info("Selected MTP engine for \(device.displayName)")
-        return MTPEngine()
+        if adbAvailable && userPreference == "auto"
+            && DeviceQuirks.shouldPreferADB(vendorID: device.vendorID) {
+            let profile = DeviceQuirks.profile(for: device.vendorID)
+            logger.info("Selected ADB engine (\(profile.vendorName) MTP is slow) for \(device.displayName)")
+            return ADBEngine()
+        }
+
+        logger.info("Selected native MTP engine for \(device.displayName)")
+        return MTPNativeEngine()
+    }
+
+    func shouldSuggestADB(for device: USBDevice, adbAvailable: Bool) -> Bool {
+        guard !adbAvailable else { return false }
+        return DeviceQuirks.shouldPreferADB(vendorID: device.vendorID)
     }
 }

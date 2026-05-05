@@ -133,8 +133,17 @@ struct DeviceBrowserView: View {
     private var content: some View {
         if isLoading {
             Spacer()
-            ProgressView("Loading \(currentPath)…")
-                .frame(maxWidth: .infinity)
+            VStack(spacing: 8) {
+                ProgressView()
+                Text("Loading…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(currentPath)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
             Spacer()
         } else if let error = errorMessage {
             Spacer()
@@ -168,57 +177,59 @@ struct DeviceBrowserView: View {
     }
 
     private var fileList: some View {
-        List(items) { item in
-            HStack(spacing: 10) {
-                // Checkbox — only for files, not folders
-                if !item.isDirectory {
-                    Image(systemName: selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(selectedIDs.contains(item.id) ? Color.accentColor : Color.secondary.opacity(0.4))
-                        .font(.body)
-                } else {
-                    Image(systemName: fileIcon(for: item))
-                        .foregroundStyle(.yellow)
-                        .frame(width: 18)
-                }
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(items) { item in
+                    HStack(spacing: 10) {
+                        if !item.isDirectory {
+                            Image(systemName: selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(selectedIDs.contains(item.id) ? Color.accentColor : Color.secondary.opacity(0.4))
+                                .font(.body)
+                        } else {
+                            Image(systemName: fileIcon(for: item))
+                                .foregroundStyle(.yellow)
+                                .frame(width: 18)
+                        }
 
-                // Icon for files (folders already have their icon above)
-                if !item.isDirectory {
-                    Image(systemName: fileIcon(for: item))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 18)
-                }
+                        if !item.isDirectory {
+                            Image(systemName: fileIcon(for: item))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 18)
+                        }
 
-                // Name + size
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(item.name)
-                        .font(.body)
-                        .lineLimit(1)
-                    if !item.isDirectory {
-                        Text(ByteFormatter.format(item.size))
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.name)
+                                .font(.body)
+                                .lineLimit(1)
+                            if !item.isDirectory {
+                                Text(ByteFormatter.format(item.size))
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+
+                        Spacer()
+
+                        if item.isDirectory {
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                }
-
-                Spacer()
-
-                // Chevron for folders
-                if item.isDirectory {
-                    Image(systemName: "chevron.right")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                if item.isDirectory {
-                    navigateInto(item)
-                } else {
-                    toggleSelection(item)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if item.isDirectory {
+                            navigateInto(item)
+                        } else {
+                            toggleSelection(item)
+                        }
+                    }
+                    Divider().padding(.leading, 44)
                 }
             }
         }
-        .listStyle(.plain)
     }
 
     /// Navigate into a folder on the device.
@@ -399,7 +410,20 @@ struct DeviceBrowserView: View {
 
     // MARK: - Directory Loading
 
+    /// Cache of previously loaded directories to avoid re-enumeration on back navigation.
+    @State private var directoryCache: [String: [FileItem]] = [:]
+
     private func loadDirectory(_ path: String) {
+        // Serve from cache immediately if available (instant back-navigation)
+        if let cached = directoryCache[path] {
+            self.items = cached
+            self.isLoading = false
+            self.errorMessage = nil
+            // Refresh in background for freshness
+            Task { await refreshDirectoryInBackground(path) }
+            return
+        }
+
         isLoading = true
         errorMessage = nil
         items = []
@@ -407,13 +431,15 @@ struct DeviceBrowserView: View {
         Task {
             do {
                 let files = try await appState.listDeviceFiles(at: path)
+                let sorted = files
+                    .filter { !$0.name.hasPrefix(".") }
+                    .sorted {
+                        if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
+                        return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                    }
                 await MainActor.run {
-                    self.items = files
-                        .filter { !$0.name.hasPrefix(".") }
-                        .sorted {
-                            if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
-                            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-                        }
+                    self.items = sorted
+                    self.directoryCache[path] = sorted
                     self.isLoading = false
                 }
             } catch {
@@ -422,6 +448,28 @@ struct DeviceBrowserView: View {
                     self.isLoading = false
                 }
             }
+        }
+    }
+
+    /// Refresh a cached directory in the background without showing a loading spinner.
+    private func refreshDirectoryInBackground(_ path: String) async {
+        do {
+            let files = try await appState.listDeviceFiles(at: path)
+            let sorted = files
+                .filter { !$0.name.hasPrefix(".") }
+                .sorted {
+                    if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
+                    return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                }
+            await MainActor.run {
+                // Only update if user is still viewing this path
+                if self.currentPath == path {
+                    self.items = sorted
+                }
+                self.directoryCache[path] = sorted
+            }
+        } catch {
+            // Silent failure on background refresh — cached data is still valid
         }
     }
 

@@ -102,9 +102,9 @@ final class AppState: ObservableObject {
     // MARK: - Device Monitoring
 
     private func startMonitoring() {
-        deviceMonitor.onDeviceConnected = { [weak self] device in
+        deviceMonitor.onDeviceConnected = { [weak self] usbDevice in
             Task { @MainActor in
-                self?.handleDeviceConnected(device)
+                self?.handleDeviceConnected(usbDevice)
             }
         }
 
@@ -163,19 +163,24 @@ final class AppState: ObservableObject {
     /// Combine cancellables.
     private var cancellables: Set<AnyCancellable> = []
 
-    private func handleDeviceConnected(_ device: DeviceState) {
-        logger.info("Device connected: \(device.displayName) [\(device.redactedSerial)]")
-        deviceState = device
+    private func handleDeviceConnected(_ usbDevice: USBDevice) {
+        let redactedSerial = usbDevice.serialNumber.count > 4
+            ? "***" + String(usbDevice.serialNumber.suffix(4))
+            : "****"
+        logger.info("Device connected: \(usbDevice.displayName) [\(redactedSerial)]")
 
-        connectedUSBDevice = USBDevice(
-            serialNumber: device.serialNumber,
-            vendorID: 0,
-            productID: 0,
-            displayName: device.displayName,
-            manufacturer: device.manufacturer,
-            usbMode: device.engineType == .adb ? .adb : .mtp,
-            usbSpeed: .unknown
+        let device = DeviceState(
+            serialNumber: usbDevice.serialNumber,
+            displayName: "\(usbDevice.manufacturer) \(usbDevice.displayName)",
+            manufacturer: usbDevice.manufacturer,
+            model: usbDevice.displayName,
+            connectionStatus: .connected,
+            engineType: usbDevice.usbMode == .adb ? .adb : .mtp,
+            usbSpeedDescription: usbDevice.usbSpeed.description
         )
+
+        deviceState = device
+        connectedUSBDevice = usbDevice
 
         notificationManager.notifyDeviceConnected(deviceName: device.displayName)
 
@@ -252,7 +257,33 @@ final class AppState: ObservableObject {
 
                 await MainActor.run { self.activeEngine = engine }
 
-                try await engine.connect(device: usbDevice)
+                do {
+                    try await engine.connect(device: usbDevice)
+                } catch {
+                    // If the preferred engine fails (e.g., ADB not authorized),
+                    // fall back to the other engine before giving up.
+                    let isADBEngine = engine is ADBEngine
+                    let fallbackEngine: (any TransferEngine)?
+
+                    if isADBEngine {
+                        self.logger.warning("ADB connect failed (\(error.localizedDescription)), falling back to native MTP")
+                        fallbackEngine = MTPNativeEngine()
+                    } else {
+                        if self.isADBAvailable {
+                            self.logger.warning("MTP connect failed (\(error.localizedDescription)), falling back to ADB")
+                            fallbackEngine = ADBEngine()
+                        } else {
+                            fallbackEngine = nil
+                        }
+                    }
+
+                    if let fallback = fallbackEngine {
+                        await MainActor.run { self.activeEngine = fallback }
+                        try await fallback.connect(device: usbDevice)
+                    } else {
+                        throw error
+                    }
+                }
 
                 let report = try await self.ingestEngine.runIngest(
                     profile: profile,
@@ -363,8 +394,32 @@ final class AppState: ObservableObject {
                 userPreference: UserDefaults.standard.string(forKey: "preferredEngine") ?? "auto",
                 adbAvailable: isADBAvailable
             )
-            try await engine.connect(device: usbDevice)
-            activeEngine = engine
+
+            do {
+                try await engine.connect(device: usbDevice)
+                activeEngine = engine
+            } catch {
+                // Fallback: if preferred engine fails, try the other one
+                let isADBEngine = engine is ADBEngine
+                let fallbackEngine: (any TransferEngine)?
+
+                if isADBEngine {
+                    logger.warning("ADB connect failed for browse, falling back to native MTP")
+                    fallbackEngine = MTPNativeEngine()
+                } else if isADBAvailable {
+                    logger.warning("MTP connect failed for browse, falling back to ADB")
+                    fallbackEngine = ADBEngine()
+                } else {
+                    fallbackEngine = nil
+                }
+
+                if let fallback = fallbackEngine {
+                    try await fallback.connect(device: usbDevice)
+                    activeEngine = fallback
+                } else {
+                    throw error
+                }
+            }
         }
 
         guard let engine = activeEngine else {

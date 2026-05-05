@@ -1,0 +1,5 @@
+module CMTPCore {
+    header "mtp_core.h"
+    header "mtp_usb_transport.h"
+    export *
+}

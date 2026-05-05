@@ -55,6 +55,7 @@ targets:
       - path: Sources/App
       - path: Sources/CLibMTP
       - path: Sources/CTransferUtils
+      - path: Sources/CMTPCore
       - path: Resources/AppIcon.icns
         buildPhase: resources
     dependencies:
@@ -75,8 +76,8 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Resources/SnapHaul.entitlements
         LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
         PRODUCT_NAME: SnapHaul
-        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/Sources/CLibMTP $(SRCROOT)/Sources/CTransferUtils/include"
-        HEADER_SEARCH_PATHS: "/opt/homebrew/opt/libmtp/include /opt/homebrew/opt/libusb/include $(SRCROOT)/Sources/CTransferUtils/include"
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/Sources/CLibMTP $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include"
+        HEADER_SEARCH_PATHS: "/opt/homebrew/opt/libmtp/include /opt/homebrew/opt/libusb/include /opt/homebrew/opt/libusb/include/libusb-1.0 $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include"
         LIBRARY_SEARCH_PATHS: "/opt/homebrew/opt/libmtp/lib /opt/homebrew/opt/libusb/lib"
         OTHER_LDFLAGS: "-lmtp -lusb-1.0"
       configs:
