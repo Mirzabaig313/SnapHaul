@@ -49,10 +49,24 @@ struct FileOrganizer {
                 continue
             }
 
-            // Parse EXIF if it's an image
-            let exif = exifParser.parse(at: sourceURL)
-            let fileDate = exif?.dateTaken ?? file.modificationDate
-            let cameraModel = exif?.cameraModel
+            // Fast EXIF date extraction (C, <1μs) — fall back to full parser for camera model
+            let fileDate: Date
+            let cameraModel: String?
+            if FastEXIF.supportsEXIF(file.name),
+               let fastDate = FastEXIF.extractDate(from: sourceURL) {
+                fileDate = fastDate.date ?? file.modificationDate
+                // Only load full EXIF if we need camera model for the naming template
+                if profile.namingTemplate.contains("{camera}") {
+                    let exif = exifParser.parse(at: sourceURL)
+                    cameraModel = exif?.cameraModel
+                } else {
+                    cameraModel = nil
+                }
+            } else {
+                let exif = exifParser.parse(at: sourceURL)
+                fileDate = exif?.dateTaken ?? file.modificationDate
+                cameraModel = exif?.cameraModel
+            }
 
             // Generate the new filename
             let newName = template.apply(

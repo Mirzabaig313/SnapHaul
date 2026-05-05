@@ -26,9 +26,11 @@ int fast_copy_nocache(
 // MARK: - Fast ls -la Parser
 
 /// Parsed file entry from `ls -la` output.
+/// Uses 256+512 byte fields (768 bytes/entry) instead of 1024+2048 (3 KB/entry).
+/// 1000 entries = ~768 KB instead of ~3 MB. Android paths rarely exceed 256 chars.
 typedef struct {
-    char name[1024];
-    char path[2048];
+    char name[256];
+    char path[512];
     uint64_t size;
     int64_t mod_time;
     int is_directory;

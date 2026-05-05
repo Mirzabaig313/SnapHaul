@@ -52,7 +52,7 @@ struct ChecksumVerifier {
         let remoteHash: String
         switch algorithm {
         case .xxh3:
-            remoteHash = XXHasher.hash(data: remoteData)
+            remoteHash = FastXXH3.hash(data: remoteData)
         case .sha256:
             remoteHash = sha256Hash(data: remoteData)
         }
@@ -70,7 +70,7 @@ struct ChecksumVerifier {
     private func hashLocalFile(at url: URL, algorithm: ChecksumAlgorithm) throws -> String {
         switch algorithm {
         case .xxh3:
-            return try XXHasher.hashFile(at: url)
+            return try FastXXH3.hashFile(at: url)
         case .sha256:
             let data = try Data(contentsOf: url, options: .mappedIfSafe)
             return sha256Hash(data: data)

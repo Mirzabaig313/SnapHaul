@@ -146,7 +146,7 @@ actor ADBEngine: TransferEngine {
         try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
 
         let output = try await runADB(["-s", serial, "pull", remotePath, localURL.path])
-        let fileSize = parseADBPullSize(output) ?? 0
+        let fileSize = FastADBParser.parsePullOutput(output)?.bytesTransferred ?? 0
 
         let actualSize: UInt64
         if fileSize > 0 {
@@ -172,7 +172,7 @@ actor ADBEngine: TransferEngine {
         let remoteDirSlash = remoteDir.hasSuffix("/") ? remoteDir : remoteDir + "/"
         let output = try await runADB(["-s", serial, "pull", remoteDirSlash, localDir.path])
 
-        let totalBytes = parseADBPullSize(output) ?? 0
+        let totalBytes = FastADBParser.parsePullOutput(output)?.bytesTransferred ?? 0
         if totalBytes == 0 {
             return directorySize(at: localDir)
         }
@@ -189,7 +189,7 @@ actor ADBEngine: TransferEngine {
         let remoteDirSlash = remoteDir.hasSuffix("/") ? remoteDir : remoteDir + "/"
         let output = try await runADB(["-s", serial, "pull", remoteDirSlash, localDir.path])
 
-        return parseADBPullSize(output) ?? 0
+        return FastADBParser.parsePullOutput(output)?.bytesTransferred ?? 0
     }
 
     private func directorySize(at url: URL) -> UInt64 {
@@ -239,9 +239,10 @@ actor ADBEngine: TransferEngine {
         var storageTotal: UInt64?
         var storageFree: UInt64?
         if let dfOutput = try? await runADB(["-s", serial, "shell", "df", "/storage/emulated/0"]) {
-            let parsed = parseDfOutput(dfOutput)
-            storageTotal = parsed.total
-            storageFree = parsed.free
+            if let parsed = FastADBParser.parseDf(dfOutput) {
+                storageTotal = parsed.total
+                storageFree = parsed.free
+            }
         }
 
         return DeviceState(
@@ -371,36 +372,6 @@ actor ADBEngine: TransferEngine {
         }
 
         return items
-    }
-
-    /// Parse `adb pull` output to extract transferred byte count.
-    private func parseADBPullSize(_ output: String) -> UInt64? {
-        let pattern = #"\((\d+) bytes in"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(
-                in: output,
-                range: NSRange(output.startIndex..., in: output)
-              ),
-              let captureRange = Range(match.range(at: 1), in: output) else {
-            return nil
-        }
-        return UInt64(output[captureRange])
-    }
-
-    /// Parse `df` output to extract storage total and free.
-    private func parseDfOutput(_ output: String) -> (total: UInt64?, free: UInt64?) {
-        let lines = output.components(separatedBy: "\n")
-        guard lines.count >= 2 else { return (nil, nil) }
-
-        let dataLine = lines.last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty && !$0.contains("Filesystem") })
-        guard let line = dataLine else { return (nil, nil) }
-
-        let parts = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-        guard parts.count >= 4 else { return (nil, nil) }
-
-        let totalKB = UInt64(parts[1])
-        let freeKB = UInt64(parts[3])
-        return (total: totalKB.map { $0 * 1024 }, free: freeKB.map { $0 * 1024 })
     }
 
     /// Map file extension to UTType content type string.

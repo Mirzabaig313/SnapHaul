@@ -187,7 +187,7 @@ actor IngestEngine {
             // Hash the file at its final organized location (not the original name)
             let hash: String?
             if let finalURL = organizedMap[file.path] {
-                hash = try? XXHasher.hashFile(at: finalURL)
+                hash = try? FastXXH3.hashFile(at: finalURL)
             } else {
                 hash = nil
             }
