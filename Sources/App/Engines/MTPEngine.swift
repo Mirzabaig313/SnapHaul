@@ -357,19 +357,15 @@ actor MTPEngine: TransferEngine {
             throw MTPError.fileNotFound(path: remotePath)
         }
 
-        // Ensure parent directory exists
         let parentDir = localURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
 
-        // Use LIBMTP_Get_File_To_File for direct-to-disk transfer.
-        // This avoids loading the file into memory — libmtp writes directly
-        // to the destination path.
         let result = LIBMTP_Get_File_To_File(
             dev,
             fileID,
             localURL.path,
-            nil,  // progress callback (TODO: wire up in Phase 3)
-            nil   // callback data
+            nil,
+            nil
         )
 
         guard result == 0 else {
@@ -378,7 +374,6 @@ actor MTPEngine: TransferEngine {
             throw MTPError.transferFailed(file: remotePath, reason: errStr)
         }
 
-        // Get the size of the written file
         let attrs = try FileManager.default.attributesOfItem(atPath: localURL.path)
         let fileSize = attrs[.size] as? UInt64 ?? 0
 
@@ -386,6 +381,127 @@ actor MTPEngine: TransferEngine {
 
         logger.debug("Pulled \(fileSize) bytes: \(remotePath, privacy: .private(mask: .hash))")
         return fileSize
+    }
+
+    /// Pull a file using a pre-resolved object ID. Skips path resolution overhead.
+    /// Used by the pipelined batch transfer to avoid per-file resolve round-trips.
+    func pullFileByID(
+        objectID: UInt32,
+        to localURL: URL,
+        progress: (@Sendable (UInt64) -> Void)?
+    ) async throws -> UInt64 {
+        guard let dev = device else { throw MTPError.deviceNotFound }
+
+        let parentDir = localURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
+
+        let result = LIBMTP_Get_File_To_File(dev, objectID, localURL.path, nil, nil)
+
+        guard result == 0 else {
+            let errStr = lastMTPError()
+            throw MTPError.transferFailed(file: "objectID:\(objectID)", reason: errStr)
+        }
+
+        let attrs = try FileManager.default.attributesOfItem(atPath: localURL.path)
+        let fileSize = attrs[.size] as? UInt64 ?? 0
+        progress?(fileSize)
+        return fileSize
+    }
+
+    // MARK: - Pipelined Batch Transfer
+
+    /// Resolve multiple file paths to MTP object IDs in one pass.
+    /// Pre-resolving eliminates per-file USB round-trips during batch transfer.
+    /// For 1000 files: saves ~1-3 ms × 1000 = 1-3 seconds of USB latency.
+    func resolveObjectIDs(for paths: [String]) -> [String: UInt32] {
+        guard device != nil else { return [:] }
+
+        // Group files by parent directory to minimize directory enumerations.
+        // Instead of resolving each path independently (N enumerations),
+        // we resolve each unique directory once and look up files within it.
+        var dirToFiles: [String: [String]] = [:]
+        for path in paths {
+            let components = path.split(separator: "/").map(String.init).filter { !$0.isEmpty }
+            guard !components.isEmpty else { continue }
+            let fileName = components.last!
+            let dirPath = components.count > 1
+                ? "/" + components.dropLast().joined(separator: "/")
+                : "/"
+            dirToFiles[dirPath, default: []].append(fileName)
+        }
+
+        var result: [String: UInt32] = [:]
+        result.reserveCapacity(paths.count)
+
+        for (dirPath, fileNames) in dirToFiles {
+            let parentID: UInt32
+            if dirPath == "/" {
+                parentID = MTPEngine.rootParentID
+            } else {
+                guard let resolved = resolvePathToFolderID(dirPath, storageID: storageID) else {
+                    continue
+                }
+                parentID = resolved
+            }
+
+            // Enumerate the directory once and match all requested files
+            guard let dev = device else { break }
+            let fileNamesSet = Set(fileNames)
+            let files = LIBMTP_Get_Files_And_Folders(dev, storageID, parentID)
+            var node = files
+
+            while let current = node {
+                let name = current.pointee.filename.flatMap { String(cString: $0) }
+                let next = current.pointee.next
+
+                if let name, fileNamesSet.contains(name) {
+                    let fullPath = dirPath == "/"
+                        ? "/\(name)"
+                        : "\(dirPath)/\(name)"
+                    result[fullPath] = current.pointee.item_id
+                }
+
+                LIBMTP_destroy_file_t(current)
+                node = next
+            }
+        }
+
+        return result
+    }
+
+    /// Pipelined batch pull: resolves all paths upfront, then transfers sequentially
+    /// without per-file path resolution. Hides USB round-trip latency between files.
+    ///
+    /// For 1000 small files (5-15 MB each):
+    /// - Without pipeline: resolve(1ms) + pull + resolve(1ms) + pull + ... = 1-3s wasted
+    /// - With pipeline: resolve_all(50ms) + pull + pull + pull + ... = near-zero overhead
+    func pullFilesPipelined(
+        files: [(remotePath: String, localURL: URL)],
+        progress: (@Sendable (UInt64) -> Void)?
+    ) async throws -> UInt64 {
+        guard device != nil else { throw MTPError.deviceNotFound }
+
+        // Phase 1: Batch resolve all paths to object IDs (single directory enumeration per unique dir)
+        let paths = files.map { $0.remotePath }
+        let objectIDMap = resolveObjectIDs(for: paths)
+
+        logger.info("Pipelined MTP: resolved \(objectIDMap.count)/\(files.count) object IDs")
+
+        // Phase 2: Transfer files using pre-resolved IDs (no per-file resolution)
+        var totalBytes: UInt64 = 0
+
+        for (remotePath, localURL) in files {
+            guard let objectID = objectIDMap[remotePath] else {
+                logger.warning("Could not resolve: \(remotePath, privacy: .private(mask: .hash))")
+                continue
+            }
+
+            let bytes = try await pullFileByID(objectID: objectID, to: localURL, progress: nil)
+            totalBytes += bytes
+            progress?(totalBytes)
+        }
+
+        return totalBytes
     }
 
     // MARK: - Device Info
