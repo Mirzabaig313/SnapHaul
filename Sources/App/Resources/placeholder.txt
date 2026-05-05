@@ -1,0 +1,5 @@
+# Resources Directory
+# Place bundled assets here:
+# - adb/ (ADB binary)
+# - Licenses/ (LGPL, Apache, MIT, BSD license texts)
+# - Assets.xcassets (app icons, SF Symbol overrides)

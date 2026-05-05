@@ -1,0 +1,44 @@
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+**/xcuserdata/
+*.xcuserstate
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.xccheckout
+*.xcscmblueprint
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# macOS
+.DS_Store
+**/.DS_Store
+*.swp
+*~
+.Trashes
+.Spotlight-V100
+
+# Build artifacts
+build/
+dist/
+*.dmg
+*.app
+
+# Secrets
+*.p12
+*.mobileprovision
+*.provisionprofile
+
+# Generated docs
+docs/
+
+# Kiro
+.kiro/

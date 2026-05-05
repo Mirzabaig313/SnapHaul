@@ -1,0 +1,148 @@
+name: SnapHaul
+options:
+  bundleIdPrefix: com.snaphaul
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+# ── Packages ──────────────────────────────────────────────────────────────────
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift.git
+    from: 7.0.0
+  xxHash-Swift:
+    url: https://github.com/daisuke-t-jp/xxHash-Swift.git
+    from: 1.1.0
+
+# ── Settings shared across all targets ────────────────────────────────────────
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: G5L4347HT3
+
+# ── Targets ───────────────────────────────────────────────────────────────────
+targets:
+
+  # ── Shared framework (SnapHaulKit) ──────────────────────────────────────────
+  SnapHaulKit:
+    type: framework
+    platform: macOS
+    sources:
+      - path: Sources/MediaIngestKit
+    dependencies:
+      - package: GRDB
+        product: GRDB
+      - package: xxHash-Swift
+        product: xxHash-Swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.snaphaul.kit
+        PRODUCT_NAME: SnapHaulKit
+        DEFINES_MODULE: YES
+        GENERATE_INFOPLIST_FILE: YES
+
+  # ── Host app ────────────────────────────────────────────────────────────────
+  SnapHaul:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/App
+      - path: Sources/CLibMTP
+      - path: Resources/AppIcon.icns
+        buildPhase: resources
+    dependencies:
+      - target: SnapHaulKit
+        embed: true
+      - target: SnapHaulFileProvider
+        embed: true
+        codeSign: true
+    postBuildScripts:
+      - name: "Copy & Sign libmtp/libusb"
+        script: |
+          "${SRCROOT}/scripts/copy-dylibs.sh"
+        basedOnDependencyAnalysis: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.snaphaul.app
+        INFOPLIST_FILE: Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/SnapHaul.entitlements
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+        PRODUCT_NAME: SnapHaul
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/Sources/CLibMTP"
+        HEADER_SEARCH_PATHS: "/opt/homebrew/opt/libmtp/include /opt/homebrew/opt/libusb/include"
+        LIBRARY_SEARCH_PATHS: "/opt/homebrew/opt/libmtp/lib /opt/homebrew/opt/libusb/lib"
+        OTHER_LDFLAGS: "-lmtp -lusb-1.0"
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+        Release:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: ""
+
+  # ── Unit Tests ──────────────────────────────────────────────────────────────
+  SnapHaulTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/UnitTests
+    dependencies:
+      - target: SnapHaulKit
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.snaphaul.tests
+        PRODUCT_NAME: SnapHaulTests
+
+  # ── File Provider Extension ──────────────────────────────────────────────────
+  # NOTE: Finder Sync Extension is intentionally NOT included.
+  # Apple explicitly states an app cannot have both a FinderSync and a
+  # FileProvider extension in the same bundle (they conflict over the same
+  # XPC slot). Context menu actions are provided via NSFileProviderCustomAction
+  # inside the File Provider extension instead.
+  # See: https://developer.apple.com/forums/thread/718381
+  SnapHaulFileProvider:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Sources/FileProviderExtension
+    dependencies:
+      - target: SnapHaulKit
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.snaphaul.app.fileprovider
+        PRODUCT_NAME: SnapHaulFileProvider
+        INFOPLIST_FILE: Sources/FileProviderExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/FileProviderExtension/SnapHaulFileProvider.entitlements
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../../../../Frameworks"
+
+# ── Schemes ───────────────────────────────────────────────────────────────────
+schemes:
+  SnapHaul:
+    build:
+      targets:
+        SnapHaul: all
+        SnapHaulKit: all
+        SnapHaulFileProvider: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - SnapHaulTests
+    archive:
+      config: Release
+
+  SnapHaulTests:
+    build:
+      targets:
+        SnapHaulTests: all
+    test:
+      config: Debug
+      targets:
+        - SnapHaulTests
