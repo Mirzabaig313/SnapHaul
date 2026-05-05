@@ -215,6 +215,31 @@ int parse_adb_devices(const char *output, adb_device_t *devices, int max_devices
 /// @return 0 on success, -1 if parsing failed
 int parse_df_output(const char *output, uint64_t *total_bytes, uint64_t *free_bytes);
 
+/// Hash a file using a pre-allocated buffer from the pool instead of mmap.
+/// Better for many small files (< 16 MB) where mmap setup cost dominates.
+/// @param path File path to hash
+/// @param hash_out Output: 64-bit hash value
+/// @param buf Pre-allocated buffer (from buffer_pool_acquire)
+/// @param buf_size Size of the buffer
+/// @return 0 on success, -1 on error
+int xxh3_hash_file_pooled(const char *path, uint64_t *hash_out, void *buf, size_t buf_size);
+
+/// Copy a file using a pre-allocated buffer from the pool.
+/// Avoids per-file posix_memalign/free overhead.
+/// @param src_path Source file path
+/// @param dst_path Destination file path
+/// @param buf Pre-allocated page-aligned buffer
+/// @param buf_size Size of the buffer (used as chunk size)
+/// @param bytes_written Output: total bytes written
+/// @return 0 on success, -1 on error
+int fast_copy_pooled(
+    const char *src_path,
+    const char *dst_path,
+    void *buf,
+    size_t buf_size,
+    uint64_t *bytes_written
+);
+
 // MARK: - Buffer Pool
 
 /// Opaque buffer pool handle (void* for Swift interop with incomplete C struct).

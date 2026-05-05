@@ -347,10 +347,13 @@ enum FastADBParser {
 /// Pre-allocated page-aligned buffer pool for transfer chunks.
 final class TransferBufferPool: @unchecked Sendable {
     private let pool: UnsafeMutableRawPointer
+    let bufferSize: Int
 
     init?(bufferSize: Int, count: Int = 4) {
         guard let p = buffer_pool_create(bufferSize, Int32(count)) else { return nil }
         self.pool = p
+        // Store the actual aligned size (rounded up to 16 KB)
+        self.bufferSize = ((bufferSize + 16383) / 16384) * 16384
     }
 
     deinit { buffer_pool_destroy(pool) }
@@ -368,5 +371,42 @@ final class TransferBufferPool: @unchecked Sendable {
         guard let buf = acquire() else { return nil }
         defer { release(buf) }
         return try body(buf)
+    }
+
+    /// Hash a file using a pool buffer instead of mmap. Better for many small files.
+    func hashFile(at url: URL) throws -> String {
+        guard let buf = acquire() else {
+            // Pool exhausted — fall back to mmap path
+            return try FastXXH3.hashFile(at: url)
+        }
+        defer { release(buf) }
+
+        var hash: UInt64 = 0
+        let result = xxh3_hash_file_pooled(url.path, &hash, buf, bufferSize)
+        guard result == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        var hexBuf = [CChar](repeating: 0, count: 17)
+        xxh3_format_hex(hash, &hexBuf)
+        return String(cString: hexBuf)
+    }
+
+    /// Copy a file using a pool buffer. Avoids per-file allocation.
+    func copyFile(from source: URL, to destination: URL) throws -> UInt64 {
+        guard let buf = acquire() else {
+            // Pool exhausted — fall back to allocating path
+            return try FastCopy.copy(from: source, to: destination)
+        }
+        defer { release(buf) }
+
+        let parentDir = destination.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
+
+        var bytesWritten: UInt64 = 0
+        let result = fast_copy_pooled(source.path, destination.path, buf, bufferSize, &bytesWritten)
+        guard result == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        return bytesWritten
     }
 }

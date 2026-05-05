@@ -164,8 +164,13 @@ actor IngestEngine {
         let hashMap = Dictionary(uniqueKeysWithValues: zip(organizedURLs, batchHashes))
 
         // 8. Update manifest and transfer history
+        let sessionDurationMs = Int64(Date().timeIntervalSince(startTime) * 1000)
+        let perFileDurationMs = newFiles.isEmpty ? 0 : sessionDurationMs / Int64(newFiles.count)
+
         for file in newFiles {
-            let hash: String? = organizedMap[file.path].flatMap { hashMap[$0] }
+            let hash: String? = organizedMap[file.path]
+                .flatMap { hashMap[$0] }
+                .flatMap { $0 == "0000000000000000" ? nil : $0 }
 
             let manifestStatus: String
             if organizationFailed {
@@ -190,8 +195,6 @@ actor IngestEngine {
                 logger.error("Failed to record manifest for \(file.name, privacy: .private(mask: .hash)): \(error.localizedDescription)")
             }
 
-            let sessionDurationMs = Int64(Date().timeIntervalSince(startTime) * 1000)
-            let perFileDurationMs = newFiles.isEmpty ? 0 : sessionDurationMs / Int64(newFiles.count)
             let fileStatus = organizedMap[file.path] != nil ? "success" : "failed"
             do {
                 try transferStore.record(

@@ -11,6 +11,7 @@ import os
 struct FileOrganizer {
     private let logger = Logger(subsystem: "com.snaphaul.app", category: "organizer")
     private let exifParser = EXIFParser()
+    private let bufferPool = TransferBufferPool(bufferSize: 4 * 1024 * 1024, count: 2)
 
     struct OrganizedFile {
         let originalItem: FileItem
@@ -49,7 +50,7 @@ struct FileOrganizer {
 
             let fileDate: Date
             let cameraModel: String?
-            if let batchDate = exifDateMap[file.name] as? FastEXIF.DateResult {
+            if let batchDate = exifDateMap[file.name] ?? nil {
                 fileDate = batchDate.date ?? file.modificationDate
                 if needsCamera {
                     cameraModel = exifParser.parse(at: sourceURL)?.cameraModel
@@ -89,13 +90,17 @@ struct FileOrganizer {
             let targetURL = targetDir.appendingPathComponent(newName)
             let finalURL = uniqueURL(for: targetURL)
 
-            // Cross-volume moves fail — fall back to FastCopy (direct I/O)
+            // Cross-volume moves fail — fall back to pooled copy (no per-file allocation)
             do {
                 try FileManager.default.moveItem(at: sourceURL, to: finalURL)
             } catch CocoaError.fileWriteOutOfSpace {
                 throw CocoaError(.fileWriteOutOfSpace)
             } catch {
-                _ = try FastCopy.copy(from: sourceURL, to: finalURL)
+                if let pool = bufferPool {
+                    _ = try pool.copyFile(from: sourceURL, to: finalURL)
+                } else {
+                    _ = try FastCopy.copy(from: sourceURL, to: finalURL)
+                }
                 try FileManager.default.removeItem(at: sourceURL)
             }
             results.append(OrganizedFile(originalItem: file, finalURL: finalURL))

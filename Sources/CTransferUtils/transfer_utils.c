@@ -977,6 +977,157 @@ void buffer_pool_destroy(void *handle) {
 }
 
 // ============================================================================
+// Pool-Aware I/O — Avoids per-file allocation overhead
+// ============================================================================
+
+int xxh3_hash_file_pooled(const char *path, uint64_t *hash_out, void *buf, size_t buf_size) {
+    if (!path || !hash_out || !buf || buf_size == 0) { errno = EINVAL; return -1; }
+
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+
+    struct stat st;
+    if (fstat(fd, &st) < 0) { close(fd); return -1; }
+
+    if (st.st_size == 0) {
+        close(fd);
+        *hash_out = P5;
+        return 0;
+    }
+
+    size_t file_size = (size_t)st.st_size;
+
+    // For files that fit in the buffer, read once and hash
+    if (file_size <= buf_size) {
+        ssize_t n = read(fd, buf, file_size);
+        close(fd);
+        if (n < 0 || (size_t)n != file_size) return -1;
+        *hash_out = xxh3_hash_buffer(buf, file_size);
+        return 0;
+    }
+
+    // For larger files, stream through the buffer in chunks
+    fcntl(fd, F_NOCACHE, 1);
+
+    uint64_t h = P5 + (uint64_t)file_size;
+    uint64_t v1 = h + P1 + P2, v2 = h + P2, v3 = h, v4 = h - P1;
+    size_t remaining = file_size;
+    int has_accumulators = 0;
+
+    while (remaining > 0) {
+        size_t to_read = remaining < buf_size ? remaining : buf_size;
+        ssize_t n = read(fd, buf, to_read);
+        if (n <= 0) { close(fd); return -1; }
+
+        const uint8_t *p = (const uint8_t *)buf;
+        size_t chunk_remaining = (size_t)n;
+
+        while (chunk_remaining >= 32) {
+            has_accumulators = 1;
+            v1 += rd64(p) * P2; v1 = rotl64(v1, 31) * P1; p += 8;
+            v2 += rd64(p) * P2; v2 = rotl64(v2, 31) * P1; p += 8;
+            v3 += rd64(p) * P2; v3 = rotl64(v3, 31) * P1; p += 8;
+            v4 += rd64(p) * P2; v4 = rotl64(v4, 31) * P1; p += 8;
+            chunk_remaining -= 32;
+        }
+
+        remaining -= (size_t)n;
+
+        // Final tail processing
+        if (remaining == 0) {
+            if (has_accumulators) {
+                h = rotl64(v1, 1) + rotl64(v2, 7) + rotl64(v3, 12) + rotl64(v4, 18);
+                h = mix(h, v1); h = mix(h, v2); h = mix(h, v3); h = mix(h, v4);
+                h += (uint64_t)file_size;
+            }
+            while (chunk_remaining >= 8) {
+                h ^= rd64(p) * P2;
+                h = rotl64(h, 27) * P1 + P4;
+                p += 8; chunk_remaining -= 8;
+            }
+            while (chunk_remaining > 0) {
+                h ^= (uint64_t)(*p) * P5;
+                h = rotl64(h, 11) * P1;
+                p++; chunk_remaining--;
+            }
+        }
+    }
+
+    close(fd);
+
+    h ^= h >> 33; h *= P2;
+    h ^= h >> 29; h *= P3;
+    h ^= h >> 32;
+
+    *hash_out = h;
+    return 0;
+}
+
+int fast_copy_pooled(
+    const char *src_path,
+    const char *dst_path,
+    void *buf,
+    size_t buf_size,
+    uint64_t *bytes_written
+) {
+    if (!src_path || !dst_path || !buf || !bytes_written || buf_size == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    *bytes_written = 0;
+
+    int src_fd = open(src_path, O_RDONLY);
+    if (src_fd < 0) return -1;
+    fcntl(src_fd, F_NOCACHE, 1);
+
+    struct stat st;
+    if (fstat(src_fd, &st) < 0) { close(src_fd); return -1; }
+
+    int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (dst_fd < 0) { close(src_fd); return -1; }
+    fcntl(dst_fd, F_NOCACHE, 1);
+
+    if (st.st_size >= (off_t)PREALLOCATE_THRESHOLD) {
+        fstore_t fst = {
+            .fst_flags = F_ALLOCATECONTIG | F_ALLOCATEALL,
+            .fst_posmode = F_PEOFPOSMODE,
+            .fst_offset = 0,
+            .fst_length = st.st_size
+        };
+        if (fcntl(dst_fd, F_PREALLOCATE, &fst) < 0) {
+            fst.fst_flags = F_ALLOCATEALL;
+            fcntl(dst_fd, F_PREALLOCATE, &fst);
+        }
+    }
+
+    ssize_t bytes_read;
+    while ((bytes_read = read(src_fd, buf, buf_size)) > 0) {
+        ssize_t written = 0;
+        while (written < bytes_read) {
+            ssize_t w = write(dst_fd, (char *)buf + written, bytes_read - written);
+            if (w < 0) {
+                if (errno == EINTR) continue;
+                close(src_fd); close(dst_fd);
+                return -1;
+            }
+            written += w;
+        }
+        *bytes_written += (uint64_t)written;
+    }
+
+    if (*bytes_written != (uint64_t)st.st_size) {
+        ftruncate(dst_fd, (off_t)*bytes_written);
+    }
+
+    fcntl(dst_fd, F_FULLFSYNC);
+    close(src_fd);
+    close(dst_fd);
+
+    return (bytes_read < 0) ? -1 : 0;
+}
+
+// ============================================================================
 // Parallel Operations — GCD (libdispatch)
 // ============================================================================
 
