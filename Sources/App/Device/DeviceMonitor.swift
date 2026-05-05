@@ -12,11 +12,8 @@ import os
 /// Monitors USB device connect/disconnect events via IOKit.
 ///
 /// Uses `IOServiceAddMatchingNotification` for event-driven detection.
-/// No polling — the kernel calls us when a USB device appears or disappears.
-///
-/// The monitor runs its own RunLoop on a background thread to receive
-/// IOKit notifications without blocking the main thread. All IOKit
-/// resource cleanup happens on that same thread to avoid data races.
+/// Runs its own RunLoop on a background thread. All IOKit resource
+/// cleanup happens on that same thread to avoid data races.
 final class DeviceMonitor: @unchecked Sendable {
 
     private let logger = Logger(
@@ -26,8 +23,6 @@ final class DeviceMonitor: @unchecked Sendable {
 
     /// Called on the main thread when an Android device is connected.
     var onDeviceConnected: ((DeviceState) -> Void)?
-
-    /// Called on the main thread when a device is disconnected.
     var onDeviceDisconnected: ((String) -> Void)?
 
     private var notificationPort: IONotificationPortRef?
@@ -76,9 +71,6 @@ final class DeviceMonitor: @unchecked Sendable {
         guard !isRunning else { return }
         isRunning = true
 
-        // Retain self for the duration of monitoring. IOKit callbacks
-        // hold a raw pointer to us — we must guarantee we stay alive.
-        // cleanupOnExit() on the monitor thread is responsible for releasing this.
         retainedSelf = Unmanaged.passRetained(self)
 
         let thread = Thread { [weak self] in
@@ -101,17 +93,12 @@ final class DeviceMonitor: @unchecked Sendable {
         guard isRunning else { return }
         isRunning = false
 
-        // Signal the background run loop to exit.
-        // The run loop thread will clean up IOKit resources before exiting.
         if let rl = backgroundRunLoop {
             CFRunLoopStop(rl)
         }
 
-        // Wait for the monitor thread to fully exit before clearing references.
-        // This ensures cleanupOnExit() has run and released retainedSelf before
-        // we return — preventing a race where deinit fires while the thread is
-        // still mid-cleanup and retainedSelf is released twice.
-        // Timeout of 2s is generous — the run loop exits within one 1s tick.
+        // Wait for the monitor thread to fully exit — ensures cleanupOnExit()
+        // has released retainedSelf before we return.
         _ = threadExitSemaphore.wait(timeout: .now() + 2)
         monitorThread = nil
         backgroundRunLoop = nil
@@ -127,20 +114,14 @@ final class DeviceMonitor: @unchecked Sendable {
             if let rl = backgroundRunLoop {
                 CFRunLoopStop(rl)
             }
-            // retainedSelf is intentionally NOT released here.
-            // cleanupOnExit() on the monitor thread owns that release.
-            // If the thread never started (e.g., startMonitoring failed),
-            // retainedSelf is nil and there is nothing to release.
         }
     }
 
     // MARK: - IOKit Monitor Loop
 
     private func runMonitorLoop() {
-        // Capture this thread's run loop so stopMonitoring can signal it.
         backgroundRunLoop = CFRunLoopGetCurrent()
 
-        // Create notification port
         guard let port = IONotificationPortCreate(kIOMainPortDefault) else {
             logger.error("Failed to create IONotificationPort")
             cleanupOnExit()
@@ -148,19 +129,15 @@ final class DeviceMonitor: @unchecked Sendable {
         }
         notificationPort = port
 
-        // Add the notification port to this thread's run loop
         let runLoopSource = IONotificationPortGetRunLoopSource(port).takeUnretainedValue()
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .defaultMode)
 
-        // The raw pointer passed to IOKit callbacks.
-        // Uses the retained reference created in startMonitoring().
         guard let selfPtr = retainedSelf?.toOpaque() else {
             logger.error("No retained self pointer for IOKit callbacks")
             cleanupOnExit()
             return
         }
 
-        // Register for device arrival
         guard let matching = IOServiceMatching(kIOUSBDeviceClassName) else {
             logger.error("Failed to create matching dictionary")
             cleanupOnExit()
@@ -185,7 +162,6 @@ final class DeviceMonitor: @unchecked Sendable {
         // Drain the iterator to arm the notification (required by IOKit)
         drainIterator(addedIterator, isArrival: true)
 
-        // Register for device removal (need a new matching dict — IOKit consumes the previous one)
         guard let removalMatching = IOServiceMatching(kIOUSBDeviceClassName) else {
             logger.error("Failed to create removal matching dictionary")
             cleanupOnExit()
@@ -211,8 +187,6 @@ final class DeviceMonitor: @unchecked Sendable {
         drainIterator(removedIterator, isArrival: false)
 
         logger.info("IOKit notifications registered, entering run loop")
-
-        // Run the loop until stopped via CFRunLoopStop or thread cancellation
         while isRunning && !Thread.current.isCancelled {
             CFRunLoopRunInMode(.defaultMode, 1.0, true)
         }
@@ -241,8 +215,6 @@ final class DeviceMonitor: @unchecked Sendable {
             notificationPort = nil
         }
 
-        // Release the retained reference to self.
-        // After this, IOKit callbacks must not fire (we've destroyed the port).
         retainedSelf?.release()
         retainedSelf = nil
     }
@@ -260,9 +232,7 @@ final class DeviceMonitor: @unchecked Sendable {
     }
 
     /// Iterate through all devices in the iterator and process them.
-    ///
-    /// IOKit requires draining the iterator to arm the notification for
-    /// the next event. Each call to `IOIteratorNext` returns one device.
+    /// IOKit requires draining the iterator to arm the next notification.
     private func drainIterator(_ iterator: io_iterator_t, isArrival: Bool) {
         var service: io_service_t = IOIteratorNext(iterator)
 
@@ -389,10 +359,7 @@ final class DeviceMonitor: @unchecked Sendable {
 // MARK: - C Callback Trampolines
 
 /// C function pointer callback for device arrival.
-///
-/// IOKit requires a C function pointer — we use `Unmanaged` to bridge
-/// back to our Swift `DeviceMonitor` instance. The reference was retained
-/// in `startMonitoring()` and is released in `cleanupOnExit()`.
+/// IOKit requires a C function pointer — we bridge back via `Unmanaged`.
 private func deviceAddedCallback(
     refcon: UnsafeMutableRawPointer?,
     iterator: io_iterator_t

@@ -12,8 +12,6 @@ import SnapHaulKit
 import os
 
 /// Central application state, observable by all SwiftUI views.
-///
-/// Owns the device monitor, transfer coordinator, and ingest engine.
 @MainActor
 final class AppState: ObservableObject {
 
@@ -121,7 +119,6 @@ final class AppState: ObservableObject {
 
     /// Observe power state changes and propagate to the transfer coordinator.
     private func startPowerObservation() {
-        // Initial sync
         Task {
             await transferCoordinator.updatePowerSettings(
                 isOnBattery: powerManager.isOnBattery,
@@ -129,7 +126,6 @@ final class AppState: ObservableObject {
             )
         }
 
-        // Observe changes via Combine (PowerManager is @Published)
         powerManager.$isOnBattery.sink { [weak self] isOnBattery in
             guard let self else { return }
             Task {

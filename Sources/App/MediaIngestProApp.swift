@@ -10,7 +10,6 @@ import SnapHaulKit
 /// Main entry point for SnapHaul.
 ///
 /// Runs as a menu bar app with an optional main window.
-/// Debug flags: `--test-usb`, `--test-mtp`, `--test-adb`
 @main
 struct SnapHaulApp: App {
 

@@ -33,6 +33,13 @@ let package = Package(
             providers: [.brew(["libmtp"])]
         ),
 
+        // C utilities — high-performance file copy, ls parser, Spotlight control
+        .target(
+            name: "CTransferUtils",
+            path: "Sources/CTransferUtils",
+            publicHeadersPath: "include"
+        ),
+
         // Shared framework — models, protocols, utilities
         .target(
             name: "SnapHaulKit",
@@ -48,9 +55,8 @@ let package = Package(
             name: "SnapHaul",
             dependencies: [
                 "SnapHaulKit",
-                "CLibMTP"
-                // Sparkle removed for development builds — add back with Developer ID signing
-                // .product(name: "Sparkle", package: "Sparkle")
+                "CLibMTP",
+                "CTransferUtils"
             ],
             path: "Sources/App",
             resources: [

@@ -39,11 +39,8 @@ struct AppDatabase {
 
         var config = Configuration()
         config.prepareDatabase { db in
-            // WAL mode for concurrent reads
             try db.execute(sql: "PRAGMA journal_mode = WAL")
-            // Memory-mapped I/O — let OS manage page cache
-            try db.execute(sql: "PRAGMA mmap_size = 268435456") // 256 MB
-            // Foreign keys
+            try db.execute(sql: "PRAGMA mmap_size = 268435456")
             try db.execute(sql: "PRAGMA foreign_keys = ON")
         }
 
@@ -58,7 +55,6 @@ struct AppDatabase {
         var migrator = DatabaseMigrator()
 
         migrator.registerMigration("v1_create_tables") { db in
-            // Manifest entries for delta-sync
             try db.create(table: "manifest_entries") { t in
                 t.autoIncrementedPrimaryKey("id")
                 t.column("device_serial", .text).notNull()
@@ -73,7 +69,6 @@ struct AppDatabase {
                 t.uniqueKey(["device_serial", "profile_id", "file_path"])
             }
 
-            // Transfer history
             try db.create(table: "transfer_records") { t in
                 t.autoIncrementedPrimaryKey("id")
                 t.column("timestamp", .datetime).notNull()

@@ -20,6 +20,7 @@ final class PowerManager: ObservableObject {
     )
 
     private var runLoopSource: CFRunLoopSource?
+    private var retainedSelf: Unmanaged<PowerManager>?
 
     init() {
         updatePowerState()
@@ -30,6 +31,7 @@ final class PowerManager: ObservableObject {
         if let source = runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .defaultMode)
         }
+        retainedSelf?.release()
     }
 
     // MARK: - Performance Parameters
@@ -78,13 +80,16 @@ final class PowerManager: ObservableObject {
     }
 
     private func startMonitoring() {
+        let retained = Unmanaged.passRetained(self)
+        self.retainedSelf = retained
+
         let source = IOPSNotificationCreateRunLoopSource({ context in
             guard let context else { return }
             let manager = Unmanaged<PowerManager>.fromOpaque(context).takeUnretainedValue()
             Task { @MainActor in
                 manager.updatePowerState()
             }
-        }, Unmanaged.passUnretained(self).toOpaque()).takeRetainedValue()
+        }, retained.toOpaque()).takeRetainedValue()
 
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
         self.runLoopSource = source

@@ -21,6 +21,7 @@ actor TransferCoordinator {
 
     private var maxConcurrentStreams: Int = 4
     private static let maxErrorsRetained = 500
+    private var progressUpdateInterval: Int = 1
 
     private var throughputSamples: [Double] = []
     private(set) var calibratedThroughput: Double = 0
@@ -31,6 +32,7 @@ actor TransferCoordinator {
     /// Update concurrency and QoS based on power state.
     func updatePowerSettings(isOnBattery: Bool, isAppForeground: Bool) {
         maxConcurrentStreams = isOnBattery ? 2 : 4
+        progressUpdateInterval = isOnBattery ? 5 : 1
         currentQoS = resolveQoS(isOnBattery: isOnBattery, isAppForeground: isAppForeground)
         logger.info("Power settings: concurrency=\(self.maxConcurrentStreams), QoS=\(String(describing: self.currentQoS))")
     }
@@ -68,6 +70,7 @@ actor TransferCoordinator {
         completedFiles = 0
         transferredBytes = 0
         errors = []
+        transferredURLs = []
 
         let totalFiles = files.count
         let totalBytes = files.reduce(UInt64(0)) { $0 + $1.size }
@@ -111,18 +114,23 @@ actor TransferCoordinator {
                 let elapsed = Date().timeIntervalSince(startTime)
                 let bytesPerSecond = elapsed > 0 ? UInt64(Double(transferredBytes) / elapsed) : 0
 
-                progressHandler(TransferProgress(
-                    profileName: profileName,
-                    totalFiles: totalFiles,
-                    completedFiles: completedFiles,
-                    totalBytes: totalBytes,
-                    transferredBytes: transferredBytes,
-                    currentFileName: nil,
-                    currentFileProgress: 1.0,
-                    bytesPerSecond: bytesPerSecond,
-                    startTime: startTime,
-                    errors: errors
-                ))
+                let shouldReport = completedFiles % progressUpdateInterval == 0
+                    || completedFiles == totalFiles
+
+                if shouldReport {
+                    progressHandler(TransferProgress(
+                        profileName: profileName,
+                        totalFiles: totalFiles,
+                        completedFiles: completedFiles,
+                        totalBytes: totalBytes,
+                        transferredBytes: transferredBytes,
+                        currentFileName: nil,
+                        currentFileProgress: 1.0,
+                        bytesPerSecond: bytesPerSecond,
+                        startTime: startTime,
+                        errors: errors
+                    ))
+                }
 
                 if let nextFile = pending.next(), !isCancelled {
                     inFlight += 1
@@ -135,6 +143,8 @@ actor TransferCoordinator {
 
         let duration = Date().timeIntervalSince(startTime)
         logger.info("Transfer complete: \(self.completedFiles)/\(totalFiles) in \(String(format: "%.1f", duration))s")
+
+        enableSpotlightIndexing()
 
         return TransferSummary(
             totalFiles: totalFiles,
@@ -170,13 +180,14 @@ actor TransferCoordinator {
                 )
 
                 setNoCacheFlag(at: destinationURL)
+                suppressSpotlightIndexing(at: destinationURL)
 
                 if !isCalibrated && bytesWritten > 0 {
                     let elapsed = Date().timeIntervalSince(fileStart)
-                    if elapsed > 0.01 {
+                    if elapsed > 0.01 && throughputSamples.count < 3 {
                         throughputSamples.append(Double(bytesWritten) / elapsed)
-                        if isCalibrated {
-                            calibratedThroughput = throughputSamples.reduce(0, +) / Double(throughputSamples.count)
+                        if throughputSamples.count == 3 {
+                            calibratedThroughput = throughputSamples.reduce(0, +) / 3.0
                             logger.info("Throughput calibrated: \(String(format: "%.1f", self.calibratedThroughput / 1_000_000)) MB/s")
                         }
                     }
@@ -219,6 +230,24 @@ actor TransferCoordinator {
         }
     }
 
+    /// Suppress Spotlight indexing during transfer.
+    private func suppressSpotlightIndexing(at url: URL) {
+        SpotlightControl.suppress(at: url)
+        transferredURLs.append(url)
+    }
+
+    private var transferredURLs: [URL] = []
+
+    /// Re-enable Spotlight indexing for all transferred files in batch.
+    func enableSpotlightIndexing() {
+        SpotlightControl.enableBatch(urls: transferredURLs)
+        let count = transferredURLs.count
+        transferredURLs.removeAll()
+        if count > 0 {
+            logger.info("Re-enabled Spotlight indexing for \(count) files")
+        }
+    }
+
     // MARK: - Adaptive Chunk Sizing
 
     /// Recommended chunk size based on file size and calibrated throughput.
@@ -229,7 +258,7 @@ actor TransferCoordinator {
 
         switch fileSize {
         case 0..<1_048_576:
-            return Int(fileSize)
+            return max(Int(fileSize), 65_536)
         case 1_048_576..<104_857_600:
             return 4_194_304
         case 104_857_600..<1_073_741_824:

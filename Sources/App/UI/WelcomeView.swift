@@ -10,7 +10,6 @@ import SnapHaulKit
 /// First-run onboarding wizard.
 ///
 /// Steps: Welcome → Connect Device → ADB Setup (optional) → Create Profile.
-/// Shown once on first launch. Tracked via `UserDefaults("hasCompletedOnboarding")`.
 struct WelcomeView: View {
 
     @ObservedObject var appState: AppState

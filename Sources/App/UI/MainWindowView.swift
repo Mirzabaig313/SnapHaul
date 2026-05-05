@@ -1085,12 +1085,29 @@ final class ThumbnailCache: ObservableObject {
     @Published var thumbnails: [String: NSImage] = [:]
     private var inFlight: Set<String> = []
     private let maxEntries = 200
+    private let maxConcurrentLoads = 3
     private var order: [String] = []
+    private var pendingQueue: [FileItem] = []
+    private weak var currentAppState: AppState?
 
     /// Load a thumbnail if not already cached or in-flight.
     func loadThumbnail(for item: FileItem, using appState: AppState) {
         if thumbnails[item.path] != nil { return }
         guard !inFlight.contains(item.path) else { return }
+
+        currentAppState = appState
+
+        if inFlight.count >= maxConcurrentLoads {
+            if !pendingQueue.contains(where: { $0.path == item.path }) {
+                pendingQueue.append(item)
+            }
+            return
+        }
+
+        startLoad(item, using: appState)
+    }
+
+    private func startLoad(_ item: FileItem, using appState: AppState) {
         inFlight.insert(item.path)
 
         Task {
@@ -1109,11 +1126,25 @@ final class ThumbnailCache: ObservableObject {
                     self.evictIfNeeded()
                 }
                 self.inFlight.remove(item.path)
-
                 try? FileManager.default.removeItem(at: tempURL)
             } catch {
                 self.inFlight.remove(item.path)
             }
+
+            self.processNextPending()
+        }
+    }
+
+    private func processNextPending() {
+        guard inFlight.count < maxConcurrentLoads,
+              !pendingQueue.isEmpty,
+              let appState = currentAppState else { return }
+
+        let next = pendingQueue.removeFirst()
+        if thumbnails[next.path] == nil && !inFlight.contains(next.path) {
+            startLoad(next, using: appState)
+        } else {
+            processNextPending()
         }
     }
 
@@ -1122,6 +1153,7 @@ final class ThumbnailCache: ObservableObject {
         thumbnails.removeAll()
         order.removeAll()
         inFlight.removeAll()
+        pendingQueue.removeAll()
     }
 
     private func evictIfNeeded() {

@@ -11,7 +11,6 @@ import os
 /// File Provider extension — mounts the Android device as a Finder volume.
 ///
 /// Communicates with the host app via XPC for all device I/O.
-/// Includes idle termination (60s) to reclaim memory when not in use.
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     private let logger = Logger(
@@ -23,6 +22,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     private var _xpcConnection: NSXPCConnection?
     private var idleTimer: DispatchSourceTimer?
     private static let idleTimeout: TimeInterval = 60
+    private let xpcQueue = DispatchQueue(label: "com.snaphaul.fileprovider.xpc")
 
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
@@ -73,12 +73,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         _xpcConnection = nil
     }
 
-    /// Reset the idle timer. After 60s of inactivity, the XPC connection
-    /// is released and macOS can terminate the extension process.
+    /// Reset the idle timer. After 60s of inactivity, the XPC connection is released.
     private func resetIdleTimer() {
         idleTimer?.cancel()
 
-        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        let timer = DispatchSource.makeTimerSource(queue: xpcQueue)
         timer.schedule(deadline: .now() + Self.idleTimeout)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
@@ -93,9 +92,6 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     // MARK: - Item lookup
 
     /// Called by macOS to get metadata for a specific item identifier.
-    ///
-    /// The identifier is the file's path on the device (e.g. "/DCIM/Camera/IMG_001.dng").
-    /// We resolve it by listing the parent directory via XPC and finding the matching entry.
     func item(
         for identifier: NSFileProviderItemIdentifier,
         request: NSFileProviderRequest,
@@ -157,9 +153,6 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     // MARK: - Android → Mac (fetch file contents)
 
     /// Called when the user opens or copies a file from the device volume in Finder.
-    ///
-    /// We pull the file from the Android device via XPC → host app → MTP/ADB engine,
-    /// write it to a temporary URL, and hand that URL back to macOS.
     func fetchContents(
         for itemIdentifier: NSFileProviderItemIdentifier,
         version requestedVersion: NSFileProviderItemVersion?,
@@ -217,9 +210,6 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     // MARK: - Mac → Android (create / upload file)
 
     /// Called when the user drags a file into the device volume in Finder.
-    ///
-    /// `url` is the local file macOS wants us to upload to the device.
-    /// We push it via XPC → host app → MTP/ADB engine.
     func createItem(
         basedOn itemTemplate: NSFileProviderItem,
         fields: NSFileProviderItemFields,
@@ -232,9 +222,6 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
         // Directory creation — no file content to push
         if itemTemplate.contentType == .folder {
-            logger.info("createItem (directory): \(itemTemplate.filename)")
-            // MTP doesn't support creating empty directories via our current engine.
-            // Return the item as-is; the directory will appear after the device is refreshed.
             completionHandler(itemTemplate, [], false, nil)
             progress.completedUnitCount = 100
             return progress
@@ -302,12 +289,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     // MARK: - Modify (rename or overwrite existing file on device)
 
-    /// Called by macOS when the user renames a file in Finder or overwrites it.
-    ///
-    /// `changedFields` tells us what changed:
-    /// - `.filename` set → user renamed the file in Finder
-    /// - `.contents` set (newContents non-nil) → user replaced the file content
-    /// Both can be set simultaneously (rename + overwrite).
+    /// Called by macOS when the user renames or overwrites a file in Finder.
     func modifyItem(
         _ item: NSFileProviderItem,
         baseVersion version: NSFileProviderItemVersion,
