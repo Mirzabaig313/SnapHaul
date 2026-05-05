@@ -52,35 +52,25 @@ actor ADBEngine: TransferEngine {
         _ = try? await runADB(["start-server"])
         let devicesOutput = try await runADB(["devices", "-l"])
 
-        let lines = devicesOutput.components(separatedBy: "\n")
+        // Use the fast C parser for device list parsing
+        let parsedDevices = FastADBParser.parseDevices(devicesOutput)
+
         var foundSerial: String?
 
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty,
-                  !trimmed.hasPrefix("List of"),
-                  !trimmed.hasPrefix("*") else { continue }
-
-            let parts = trimmed.split(separator: " ", maxSplits: 1)
-            guard parts.count >= 2 else { continue }
-
-            let serial = String(parts[0])
-            let status = String(parts[1]).trimmingCharacters(in: .whitespaces)
-
-            // Check for authorization issues
-            if status.hasPrefix("unauthorized") {
-                if serial == device.serialNumber || foundSerial == nil {
+        for dev in parsedDevices {
+            if dev.isUnauthorized {
+                if dev.serial == device.serialNumber || foundSerial == nil {
                     throw ADBError.deviceNotAuthorized(device: device.displayName)
                 }
                 continue
             }
 
             // Match by serial if possible, otherwise take the first online device
-            if serial == device.serialNumber {
-                foundSerial = serial
+            if dev.serial == device.serialNumber {
+                foundSerial = dev.serial
                 break
-            } else if status.hasPrefix("device") && foundSerial == nil {
-                foundSerial = serial
+            } else if dev.isOnline && foundSerial == nil {
+                foundSerial = dev.serial
             }
         }
 

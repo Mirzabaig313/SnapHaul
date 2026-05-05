@@ -29,6 +29,10 @@ actor TransferCoordinator {
 
     private var currentQoS: DispatchQoS.QoSClass = .utility
 
+    /// Pre-allocated buffer pool for transfer I/O (4 × 4 MB page-aligned buffers).
+    /// Eliminates per-file allocation churn during large ingest sessions.
+    private let bufferPool = TransferBufferPool(bufferSize: 4 * 1024 * 1024, count: 4)
+
     /// Update concurrency and QoS based on power state.
     func updatePowerSettings(isOnBattery: Bool, isAppForeground: Bool) {
         maxConcurrentStreams = isOnBattery ? 2 : 4
@@ -144,6 +148,8 @@ actor TransferCoordinator {
         let duration = Date().timeIntervalSince(startTime)
         logger.info("Transfer complete: \(self.completedFiles)/\(totalFiles) in \(String(format: "%.1f", duration))s")
 
+        // Batch Spotlight operations: suppress all at once, then re-enable after session
+        batchSuppressSpotlight()
         enableSpotlightIndexing()
 
         return TransferSummary(
@@ -232,11 +238,17 @@ actor TransferCoordinator {
 
     /// Suppress Spotlight indexing during transfer.
     private func suppressSpotlightIndexing(at url: URL) {
-        SpotlightControl.suppress(at: url)
         transferredURLs.append(url)
     }
 
     private var transferredURLs: [URL] = []
+
+    /// Batch-suppress Spotlight for all accumulated URLs, then re-enable after transfer.
+    /// Uses batch C call to minimize per-file syscall overhead.
+    private func batchSuppressSpotlight() {
+        guard !transferredURLs.isEmpty else { return }
+        SpotlightControl.suppressBatch(urls: transferredURLs)
+    }
 
     /// Re-enable Spotlight indexing for all transferred files in batch.
     func enableSpotlightIndexing() {

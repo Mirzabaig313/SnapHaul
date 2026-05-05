@@ -8,30 +8,15 @@ import SnapHaulKit
 import os
 
 /// Renames and organizes transferred files according to the ingest profile.
-///
-/// After files are transferred to the destination directory, the organizer:
-/// 1. Parses EXIF metadata (for images)
-/// 2. Applies the naming template to generate the final filename
-/// 3. Creates the subfolder structure
-/// 4. Moves the file to its final location
 struct FileOrganizer {
     private let logger = Logger(subsystem: "com.snaphaul.app", category: "organizer")
     private let exifParser = EXIFParser()
 
-    /// Result of organizing a single file.
     struct OrganizedFile {
         let originalItem: FileItem
         let finalURL: URL
     }
 
-    /// Organize a batch of transferred files.
-    ///
-    /// - Parameters:
-    ///   - files: The original FileItem list (for metadata like modification date).
-    ///   - transferDirectory: Where the files were initially transferred to.
-    ///   - finalDestination: The root destination from the ingest profile.
-    ///   - profile: The ingest profile with naming template and subfolder structure.
-    /// - Returns: Array of organized file results mapping original items to final URLs.
     func organize(
         files: [FileItem],
         transferDirectory: URL,
@@ -42,6 +27,19 @@ struct FileOrganizer {
         let subfolderTemplate = profile.subfolderStructure.map { NamingTemplate(template: $0) }
         var results: [OrganizedFile] = []
 
+        // Batch EXIF date extraction via C for all eligible files
+        let needsCamera = profile.namingTemplate.contains("{camera}")
+        let exifURLs: [URL] = files.compactMap { file in
+            guard FastEXIF.supportsEXIF(file.name) else { return nil }
+            let url = transferDirectory.appendingPathComponent(file.name)
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return url
+        }
+        let batchDates = FastEXIF.extractDatesBatch(urls: exifURLs)
+        let exifDateMap = Dictionary(
+            uniqueKeysWithValues: zip(exifURLs.map { $0.lastPathComponent }, batchDates)
+        )
+
         for (index, file) in files.enumerated() {
             let sourceURL = transferDirectory.appendingPathComponent(file.name)
             guard FileManager.default.fileExists(atPath: sourceURL.path) else {
@@ -49,26 +47,25 @@ struct FileOrganizer {
                 continue
             }
 
-            // Fast EXIF date extraction (C, <1μs) — fall back to full parser for camera model
             let fileDate: Date
             let cameraModel: String?
-            if FastEXIF.supportsEXIF(file.name),
-               let fastDate = FastEXIF.extractDate(from: sourceURL) {
-                fileDate = fastDate.date ?? file.modificationDate
-                // Only load full EXIF if we need camera model for the naming template
-                if profile.namingTemplate.contains("{camera}") {
-                    let exif = exifParser.parse(at: sourceURL)
-                    cameraModel = exif?.cameraModel
+            if let batchDate = exifDateMap[file.name] as? FastEXIF.DateResult {
+                fileDate = batchDate.date ?? file.modificationDate
+                if needsCamera {
+                    cameraModel = exifParser.parse(at: sourceURL)?.cameraModel
                 } else {
                     cameraModel = nil
                 }
+            } else if FastEXIF.supportsEXIF(file.name),
+                      let fastDate = FastEXIF.extractDate(from: sourceURL) {
+                fileDate = fastDate.date ?? file.modificationDate
+                cameraModel = needsCamera ? exifParser.parse(at: sourceURL)?.cameraModel : nil
             } else {
                 let exif = exifParser.parse(at: sourceURL)
                 fileDate = exif?.dateTaken ?? file.modificationDate
                 cameraModel = exif?.cameraModel
             }
 
-            // Generate the new filename
             let newName = template.apply(
                 originalName: file.name,
                 date: fileDate,
@@ -76,7 +73,6 @@ struct FileOrganizer {
                 sequenceNumber: index + 1
             )
 
-            // Generate subfolder path
             var targetDir = finalDestination
             if let subTemplate = subfolderTemplate {
                 let subPath = subTemplate.apply(
@@ -88,25 +84,25 @@ struct FileOrganizer {
                 targetDir = finalDestination.appendingPathComponent(subPath)
             }
 
-            // Create target directory
-            try FileManager.default.createDirectory(
-                at: targetDir,
-                withIntermediateDirectories: true
-            )
+            try FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
 
-            // Move file to final location
             let targetURL = targetDir.appendingPathComponent(newName)
-
-            // Handle name collisions by appending a counter
             let finalURL = uniqueURL(for: targetURL)
 
-            try FileManager.default.moveItem(at: sourceURL, to: finalURL)
+            // Cross-volume moves fail — fall back to FastCopy (direct I/O)
+            do {
+                try FileManager.default.moveItem(at: sourceURL, to: finalURL)
+            } catch CocoaError.fileWriteOutOfSpace {
+                throw CocoaError(.fileWriteOutOfSpace)
+            } catch {
+                _ = try FastCopy.copy(from: sourceURL, to: finalURL)
+                try FileManager.default.removeItem(at: sourceURL)
+            }
             results.append(OrganizedFile(originalItem: file, finalURL: finalURL))
 
             logger.debug("Organized: \(file.name, privacy: .private(mask: .hash)) → \(newName, privacy: .private(mask: .hash))")
         }
 
-        // Clean up the transfer directory if empty
         let remaining = try? FileManager.default.contentsOfDirectory(atPath: transferDirectory.path)
         if remaining?.isEmpty == true {
             try? FileManager.default.removeItem(at: transferDirectory)
@@ -116,14 +112,8 @@ struct FileOrganizer {
         return results
     }
 
-    /// Generate a unique URL by appending a counter if the file already exists.
-    ///
-    /// Caps at 9999 to prevent infinite loops from permission issues
-    /// or other filesystem anomalies.
     private func uniqueURL(for url: URL) -> URL {
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return url
-        }
+        guard FileManager.default.fileExists(atPath: url.path) else { return url }
 
         let directory = url.deletingLastPathComponent()
         let name = url.deletingPathExtension().lastPathComponent
@@ -136,7 +126,6 @@ struct FileOrganizer {
             }
         }
 
-        // Fallback: use UUID suffix to guarantee uniqueness
         let fallback = directory.appendingPathComponent("\(name)_\(UUID().uuidString.prefix(8)).\(ext)")
         logger.warning("Name collision cap reached for \(name, privacy: .private(mask: .hash)), using UUID suffix")
         return fallback
