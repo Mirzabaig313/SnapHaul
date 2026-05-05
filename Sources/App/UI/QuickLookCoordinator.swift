@@ -9,32 +9,19 @@ import os
 
 /// Coordinates Quick Look previews for device files.
 ///
-/// When the user presses spacebar on a selected file, this coordinator:
-/// 1. Opens the Quick Look panel immediately with a loading placeholder
-/// 2. Pulls the file from the device to a temp directory in the background
-/// 3. Reloads the panel with the real file once the download completes
-///
-/// Includes a file cache so re-previewing the same file is instant.
+/// Opens the panel immediately with a placeholder, pulls the file in the
+/// background, then reloads with the real content. Caches previewed files
+/// (50 MB LRU) so re-previewing is instant.
 @MainActor
 final class QuickLookCoordinator: NSObject, ObservableObject {
 
     @Published var isLoading = false
     @Published var error: String?
 
-    /// The currently previewed temp file URL.
     private(set) var previewURL: URL?
-
-    /// Delegate object that bridges QLPreviewPanel to this coordinator.
     private var panelDelegate: QuickLookPanelDelegate?
-
-    /// Cache of already-downloaded preview files: remotePath → local temp URL.
-    /// Avoids re-downloading when the user presses spacebar on the same file again.
     private var cache: [String: URL] = [:]
-
-    /// Maximum cache size in bytes (50 MB). Oldest entries evicted on overflow.
     private let maxCacheBytes: UInt64 = 50_000_000
-
-    /// Ordered list of cached paths for LRU eviction.
     private var cacheOrder: [String] = []
 
     private let logger = Logger(
@@ -49,11 +36,7 @@ final class QuickLookCoordinator: NSObject, ObservableObject {
         return dir
     }()
 
-    /// Preview a remote device file.
-    ///
-    /// If the file is already cached, opens Quick Look instantly.
-    /// Otherwise shows the panel immediately (with a loading title) and
-    /// swaps in the real content once the pull completes.
+    /// Preview a remote device file. Uses cache for instant re-preview.
     func preview(
         remotePath: String,
         fileName: String,
@@ -62,10 +45,9 @@ final class QuickLookCoordinator: NSObject, ObservableObject {
     ) {
         error = nil
 
-        // Check cache first — instant preview
+        // Cache hit — instant preview
         if let cachedURL = cache[remotePath],
            FileManager.default.fileExists(atPath: cachedURL.path) {
-            logger.debug("Quick Look cache hit: \(fileName)")
             previewURL = cachedURL
             isLoading = false
             showPanel(url: cachedURL, title: fileName)
@@ -73,7 +55,7 @@ final class QuickLookCoordinator: NSObject, ObservableObject {
             return
         }
 
-        // Show panel immediately with a "loading" state
+        // Show panel immediately with placeholder
         isLoading = true
         let placeholderURL = createLoadingPlaceholder(fileName: fileName)
         showPanel(url: placeholderURL, title: "Loading \(fileName)…")
@@ -84,30 +66,22 @@ final class QuickLookCoordinator: NSObject, ObservableObject {
                     UUID().uuidString + "_" + fileName
                 )
 
-                // Remove stale file if it exists
                 if FileManager.default.fileExists(atPath: tempURL.path) {
                     try FileManager.default.removeItem(at: tempURL)
                 }
 
-                logger.debug("Quick Look: pulling \(fileName) (\(fileSize) bytes)")
                 _ = try await pullFile(remotePath, tempURL)
 
                 await MainActor.run {
                     self.previewURL = tempURL
                     self.isLoading = false
-
-                    // Add to cache
                     self.addToCache(remotePath: remotePath, localURL: tempURL)
-
-                    // Reload the panel with the real file
                     self.showPanel(url: tempURL, title: fileName)
                 }
             } catch {
                 await MainActor.run {
                     self.isLoading = false
                     self.error = "Preview failed: \(error.localizedDescription)"
-                    self.logger.error("Quick Look pull failed: \(error.localizedDescription)")
-                    // Close the panel since we can't show anything useful
                     if QLPreviewPanel.sharedPreviewPanelExists(),
                        let panel = QLPreviewPanel.shared(), panel.isVisible {
                         panel.close()
@@ -117,10 +91,9 @@ final class QuickLookCoordinator: NSObject, ObservableObject {
         }
     }
 
-    /// Show or reload the Quick Look panel with the given URL.
+    /// Show or reload the Quick Look panel.
     private func showPanel(url: URL, title: String) {
         let delegate = QuickLookPanelDelegate(url: url, title: title) { [weak self] in
-            // Don't clean up cached files on close — keep them for re-preview
             self?.previewURL = nil
         }
         self.panelDelegate = delegate
@@ -136,8 +109,7 @@ final class QuickLookCoordinator: NSObject, ObservableObject {
         }
     }
 
-    /// Create a tiny placeholder text file so the panel has something to show
-    /// while the real file downloads.
+    /// Create a placeholder file so the panel has something to show while downloading.
     private func createLoadingPlaceholder(fileName: String) -> URL {
         let placeholderURL = tempDir.appendingPathComponent("_loading_\(fileName).txt")
         let message = "Downloading \(fileName) from device…"
@@ -167,7 +139,6 @@ final class QuickLookCoordinator: NSObject, ObservableObject {
             }
         }
 
-        // Evict oldest entries until under budget
         while totalSize > maxCacheBytes, !cacheOrder.isEmpty {
             let oldest = cacheOrder.removeFirst()
             if let url = cache.removeValue(forKey: oldest) {
@@ -180,7 +151,7 @@ final class QuickLookCoordinator: NSObject, ObservableObject {
         }
     }
 
-    /// Clear the entire preview cache (e.g., on device disconnect).
+    /// Clear the entire preview cache.
     func clearCache() {
         for url in cache.values {
             try? FileManager.default.removeItem(at: url)
@@ -190,7 +161,7 @@ final class QuickLookCoordinator: NSObject, ObservableObject {
         previewURL = nil
     }
 
-    /// Remove the current temp file from disk (non-cached cleanup).
+    /// Remove the current temp file from disk (non-cached).
     func cleanupTempFile() {
         if let url = previewURL, !cache.values.contains(url) {
             try? FileManager.default.removeItem(at: url)
@@ -201,7 +172,6 @@ final class QuickLookCoordinator: NSObject, ObservableObject {
 
 // MARK: - QLPreviewPanel Delegate & DataSource
 
-/// Bridges `QLPreviewPanel` to a single file URL.
 private final class QuickLookPanelDelegate: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
 
     private let url: URL
@@ -219,15 +189,11 @@ private final class QuickLookPanelDelegate: NSObject, QLPreviewPanelDataSource, 
 
     // MARK: - QLPreviewPanelDataSource
 
-    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
-        1
-    }
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { 1 }
 
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
         previewItem
     }
-
-    // MARK: - QLPreviewPanelDelegate
 
     func previewPanelDidClose(_ panel: QLPreviewPanel!) {
         onClose()
@@ -236,7 +202,6 @@ private final class QuickLookPanelDelegate: NSObject, QLPreviewPanelDataSource, 
 
 // MARK: - QLPreviewItem
 
-/// A `QLPreviewItem` wrapping a file URL with a custom title.
 private final class QuickLookItem: NSObject, QLPreviewItem {
     let previewItemURL: URL?
     let previewItemTitle: String?

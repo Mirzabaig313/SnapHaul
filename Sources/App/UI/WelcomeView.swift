@@ -9,14 +9,8 @@ import SnapHaulKit
 
 /// First-run onboarding wizard.
 ///
-/// Guides new users through:
-/// 1. Welcome — what SnapHaul does
-/// 2. Connect device — how to set up USB file transfer
-/// 3. ADB setup (optional) — for faster transfers
-/// 4. Create first profile — destination folder + basic settings
-///
-/// Shown once on first launch. The user can skip at any step.
-/// Completion is tracked via `UserDefaults("hasCompletedOnboarding")`.
+/// Steps: Welcome → Connect Device → ADB Setup (optional) → Create Profile.
+/// Shown once on first launch. Tracked via `UserDefaults("hasCompletedOnboarding")`.
 struct WelcomeView: View {
 
     @ObservedObject var appState: AppState
@@ -40,13 +34,9 @@ struct WelcomeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Step content
             stepContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-
             Divider()
-
-            // Navigation footer
             footer
         }
         .frame(width: 600, height: 560)
@@ -376,7 +366,6 @@ struct WelcomeView: View {
 
     private var footer: some View {
         HStack {
-            // Step indicators
             HStack(spacing: 6) {
                 ForEach(OnboardingStep.allCases, id: \.rawValue) { step in
                     Circle()
@@ -387,7 +376,6 @@ struct WelcomeView: View {
 
             Spacer()
 
-            // Skip button
             if currentStep != .createProfile {
                 Button("Skip") {
                     completeOnboarding()
@@ -396,7 +384,6 @@ struct WelcomeView: View {
                 .foregroundStyle(.secondary)
             }
 
-            // Navigation buttons
             if currentStep.rawValue > 0 {
                 Button("Back") {
                     withAnimation(.easeInOut(duration: 0.2)) {

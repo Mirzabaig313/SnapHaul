@@ -9,21 +9,6 @@ import UniformTypeIdentifiers
 import SnapHaulKit
 
 /// Full app window — file manager with sidebar, device browser, and transfer status.
-///
-/// Layout:
-/// ┌──────────┬──────────────────────────────────────────┐
-/// │ Sidebar  │  Content area                            │
-/// │          │  ┌────────────────┬─────────────────────┐│
-/// │ 📱Device │  │ Device files   │ Mac destination     ││
-/// │ 📂DCIM   │  │ /DCIM/Camera   │ ~/Pictures/SnapHaul ││
-/// │ 📂Down.. │  │  IMG_001.dng   │  IMG_001.dng        ││
-/// │ 📂Movies │  │  IMG_002.dng   │  VID_001.mp4        ││
-/// │          │  │  VID_001.mp4   │                     ││
-/// │ ──────── │  └────────────────┴─────────────────────┘│
-/// │ Profiles │  ┌──────────────────────────────────────┐│
-/// │ 📷Photo  │  │ Status bar: 3 selected · 148 MB      ││
-/// │ 🎬Video  │  └──────────────────────────────────────┘│
-/// └──────────┴──────────────────────────────────────────┘
 struct MainWindowView: View {
 
     @ObservedObject var appState: AppState
@@ -40,6 +25,7 @@ struct MainWindowView: View {
     @State private var isLoadingDevice = false
     @State private var deviceError: String?
     @State private var selectedFileIDs: Set<String> = []
+    @State private var viewMode: ViewMode = .list
 
     // MARK: - Transfer state
 
@@ -58,6 +44,7 @@ struct MainWindowView: View {
     // MARK: - Quick Look
 
     @StateObject private var quickLookCoordinator = QuickLookCoordinator()
+    @StateObject private var thumbnailCache = ThumbnailCache()
 
     // MARK: - Body
 
@@ -106,6 +93,7 @@ struct MainWindowView: View {
                 currentPath = "/"
                 pathStack = []
                 quickLookCoordinator.clearCache()
+                thumbnailCache.clear()
             }
         }
     }
@@ -172,13 +160,10 @@ struct MainWindowView: View {
             )
         } else {
             VStack(spacing: 0) {
-                // Breadcrumb path bar
                 pathBar
                 Divider()
-                // File list
                 fileListView
                 Divider()
-                // Status bar
                 statusBar
             }
         }
@@ -224,7 +209,6 @@ struct MainWindowView: View {
 
             Spacer()
 
-            // Item count
             if !isLoadingDevice {
                 Text("\(deviceItems.count) items")
                     .font(.caption)
@@ -250,16 +234,20 @@ struct MainWindowView: View {
                 description: Text(currentPath)
             )
         } else {
-            // Header row
-            VStack(spacing: 0) {
-                fileListHeader
-                Divider()
-                fileListBody
+            switch viewMode {
+            case .list:
+                VStack(spacing: 0) {
+                    fileListHeader
+                    Divider()
+                    fileListBody
+                }
+            case .icons:
+                iconGridBody
             }
         }
     }
 
-    /// Column headers matching the row layout.
+    /// Column headers for the list view.
     private var fileListHeader: some View {
         HStack(spacing: 0) {
             Text("")
@@ -290,7 +278,7 @@ struct MainWindowView: View {
         .background(.bar)
     }
 
-    /// File list with per-row drag support.
+    /// File list with drag-drop and context menu support.
     private var fileListBody: some View {
         List(selection: $selectedFileIDs) {
             ForEach(deviceItems) { item in
@@ -300,7 +288,6 @@ struct MainWindowView: View {
         }
         .listStyle(.plain)
         .alternatingRowBackgrounds(.enabled)
-        // ── Drop IN: Mac files → device ──
         .onDrop(of: [.fileURL, .url], isTargeted: nil) { providers in
             let hasFileURLs = providers.contains { $0.canLoadObject(ofClass: URL.self) }
             if hasFileURLs {
@@ -365,12 +352,102 @@ struct MainWindowView: View {
         .contentShape(Rectangle())
     }
 
+    // MARK: - Icon Grid View
+
+    /// Grid view showing file thumbnails — like Finder's icon view.
+    private var iconGridBody: some View {
+        ScrollView {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 100, maximum: 120), spacing: 12)],
+                spacing: 12
+            ) {
+                ForEach(deviceItems) { item in
+                    iconGridItem(item)
+                        .onTapGesture {
+                            if selectedFileIDs.contains(item.id) {
+                                selectedFileIDs.remove(item.id)
+                            } else {
+                                selectedFileIDs = [item.id]
+                            }
+                        }
+                        .onTapGesture(count: 2) {
+                            if item.isDirectory {
+                                navigateInto(item)
+                            } else {
+                                quickLookFile(item)
+                            }
+                        }
+                }
+            }
+            .padding(16)
+        }
+        .onKeyPress(.space) {
+            quickLookSelectedFile()
+            return .handled
+        }
+        .contextMenu {
+            Button("Copy to Mac…") { copySelectedToMac() }
+                .disabled(selectedFileIDs.isEmpty)
+        }
+    }
+
+    /// A single item in the icon grid — thumbnail + filename.
+    private func iconGridItem(_ item: FileItem) -> some View {
+        let isSelected = selectedFileIDs.contains(item.id)
+        return VStack(spacing: 6) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+                    .frame(width: 88, height: 88)
+
+                if item.isDirectory {
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.yellow)
+                } else if isImageFile(item.name) {
+                    ThumbnailView(
+                        item: item,
+                        appState: appState,
+                        cache: thumbnailCache
+                    )
+                    .frame(width: 80, height: 80)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                } else {
+                    Image(systemName: iconName(for: item))
+                        .font(.system(size: 36))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 88, height: 88)
+
+            Text(item.name)
+                .font(.caption2)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .frame(width: 96)
+        }
+        .padding(6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isSelected ? Color.accentColor.opacity(0.2) : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+        )
+    }
+
+    /// Whether a filename is a previewable image type.
+    private func isImageFile(_ name: String) -> Bool {
+        let ext = (name as NSString).pathExtension.lowercased()
+        return ["jpg", "jpeg", "png", "heic", "heif", "webp", "bmp", "tiff", "gif"].contains(ext)
+    }
+
     // MARK: - Status bar
 
     private var statusBar: some View {
         HStack(spacing: 10) {
             if isTransferring {
-                // Compact indicator — full details in the floating panel
                 HStack(spacing: 6) {
                     ProgressView()
                         .controlSize(.small)
@@ -382,7 +459,6 @@ struct MainWindowView: View {
                         Button {
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 showTransferPanel = true
-                                // Reset position when re-showing
                                 panelOffset = .zero
                             }
                         } label: {
@@ -464,26 +540,20 @@ struct MainWindowView: View {
         .background(.bar)
     }
 
-    /// Floating transfer progress panel — bottom-right overlay.
-    ///
-    /// Shows full transfer details: progress bar, file count, bytes,
-    /// speed, ETA, and current file name. Styled like Finder's download panel.
+    /// Floating transfer progress panel.
     private var transferPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Header
             HStack {
                 Image(systemName: "arrow.down.doc.fill")
                     .foregroundColor(.accentColor)
                 Text("Transferring Files")
                     .font(.headline)
                 Spacer()
-                // Percentage
                 Text("\(Int(transferProgress * 100))%")
                     .font(.title2)
                     .fontWeight(.semibold)
                     .monospacedDigit()
                     .foregroundColor(.accentColor)
-                // Close button — hides the panel, transfer continues
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         showTransferPanel = false
@@ -497,14 +567,11 @@ struct MainWindowView: View {
                 .help("Hide panel (transfer continues)")
             }
 
-            // Progress bar
             ProgressView(value: transferProgress)
                 .progressViewStyle(.linear)
                 .tint(Color.accentColor)
 
-            // Details grid
             HStack(spacing: 20) {
-                // Files
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Files")
                         .font(.caption2)
@@ -514,7 +581,6 @@ struct MainWindowView: View {
                         .monospacedDigit()
                 }
 
-                // Size
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Transferred")
                         .font(.caption2)
@@ -524,7 +590,6 @@ struct MainWindowView: View {
                         .monospacedDigit()
                 }
 
-                // Speed
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Speed")
                         .font(.caption2)
@@ -534,7 +599,6 @@ struct MainWindowView: View {
                         .monospacedDigit()
                 }
 
-                // ETA
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Remaining")
                         .font(.caption2)
@@ -609,6 +673,17 @@ struct MainWindowView: View {
         }
 
         ToolbarItem {
+            Picker("View", selection: $viewMode) {
+                Image(systemName: "list.bullet")
+                    .tag(ViewMode.list)
+                Image(systemName: "square.grid.2x2")
+                    .tag(ViewMode.icons)
+            }
+            .pickerStyle(.segmented)
+            .help("Switch between list and icon view")
+        }
+
+        ToolbarItem {
             if let progress = appState.transferProgress {
                 HStack(spacing: 6) {
                     ProgressView(value: progress.overallProgress)
@@ -623,14 +698,7 @@ struct MainWindowView: View {
 
     // MARK: - Drag & Drop
 
-    /// Drop IN: receive files dragged from Finder/Desktop onto the device table.
-    ///
-    /// Only processes providers that actually contain file URLs (from Finder).
-    /// Ignores our own device-file drag providers which don't have file URLs.
     private func handleDropFromFinder(_ providers: [NSItemProvider]) {
-        // Filter to only providers that actually have file URLs.
-        // Our own device drag providers register custom types, not file URLs,
-        // so they'll be filtered out here.
         let urlProviders = providers.filter { $0.canLoadObject(ofClass: URL.self) }
         guard !urlProviders.isEmpty else { return }
 
@@ -653,9 +721,7 @@ struct MainWindowView: View {
         }
     }
 
-    /// Push a list of local Mac files to the current device directory.
-    ///
-    /// Shows the transfer panel with live progress.
+    /// Push local Mac files to the current device directory.
     private func pushFilesToDevice(_ urls: [URL]) {
         // Calculate total size
         var totalSize: UInt64 = 0
@@ -753,7 +819,6 @@ struct MainWindowView: View {
 
         guard panel.runModal() == .OK, let destURL = panel.url else { return }
 
-        // Initialize transfer tracking
         isTransferring = true
         transferError = nil
         transferredFiles = 0
@@ -764,18 +829,13 @@ struct MainWindowView: View {
         showTransferPanel = true
         panelOffset = .zero
 
-        // Timer to force UI refresh for speed/ETA (SwiftUI won't re-render
-        // computed properties unless @State changes)
         let refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
             Task { @MainActor in
-                // Nudge to re-evaluate computed speed/ETA
                 let current = self.transferredBytes
                 self.transferredBytes = current
             }
         }
 
-        // Track bytes completed for previous files so the progress callback
-        // can report cumulative bytes across all files.
         var completedBytesBeforeCurrentFile: UInt64 = 0
 
         Task {
@@ -788,7 +848,6 @@ struct MainWindowView: View {
                         from: file.path,
                         to: localURL
                     ) { bytesWrittenSoFar in
-                        // Live callback — fires every ~0.3s as the file grows on disk
                         Task { @MainActor in
                             self.transferredBytes = baseBytes + bytesWrittenSoFar
                         }
@@ -828,7 +887,6 @@ struct MainWindowView: View {
         let urls = panel.urls
         guard !urls.isEmpty else { return }
 
-        // Calculate total size for progress
         var totalSize: UInt64 = 0
         for url in urls {
             if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
@@ -922,6 +980,7 @@ struct MainWindowView: View {
     private func loadDirectory(_ path: String) {
         isLoadingDevice = true
         deviceError = nil
+        thumbnailCache.clear()
 
         Task {
             do {
@@ -1007,5 +1066,127 @@ enum SidebarItem: Hashable {
     case device
     case folder(String)
     case profile(UUID)
+}
+
+// MARK: - View Mode
+
+enum ViewMode: String {
+    case list
+    case icons
+}
+
+// MARK: - Thumbnail Cache
+
+/// Caches downloaded thumbnail images for the icon grid view.
+/// Downloads lazily on scroll, LRU eviction at 200 entries.
+@MainActor
+final class ThumbnailCache: ObservableObject {
+
+    @Published var thumbnails: [String: NSImage] = [:]
+    private var inFlight: Set<String> = []
+    private let maxEntries = 200
+    private var order: [String] = []
+
+    /// Load a thumbnail if not already cached or in-flight.
+    func loadThumbnail(for item: FileItem, using appState: AppState) {
+        if thumbnails[item.path] != nil { return }
+        guard !inFlight.contains(item.path) else { return }
+        inFlight.insert(item.path)
+
+        Task {
+            do {
+                let tempDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("com.snaphaul.thumbnails", isDirectory: true)
+                try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+                let tempURL = tempDir.appendingPathComponent(UUID().uuidString + "_" + item.name)
+                _ = try await appState.pullFile(from: item.path, to: tempURL)
+
+                if let image = NSImage(contentsOf: tempURL) {
+                    let thumb = image.resized(to: NSSize(width: 160, height: 160))
+                    self.thumbnails[item.path] = thumb
+                    self.order.append(item.path)
+                    self.evictIfNeeded()
+                }
+                self.inFlight.remove(item.path)
+
+                try? FileManager.default.removeItem(at: tempURL)
+            } catch {
+                self.inFlight.remove(item.path)
+            }
+        }
+    }
+
+    /// Clear all cached thumbnails.
+    func clear() {
+        thumbnails.removeAll()
+        order.removeAll()
+        inFlight.removeAll()
+    }
+
+    private func evictIfNeeded() {
+        while thumbnails.count > maxEntries, !order.isEmpty {
+            let oldest = order.removeFirst()
+            thumbnails.removeValue(forKey: oldest)
+        }
+    }
+}
+
+// MARK: - Thumbnail View
+
+/// Displays a thumbnail for a device image file.
+/// Observes the cache and triggers loading on appear.
+struct ThumbnailView: View {
+    let item: FileItem
+    let appState: AppState
+    @ObservedObject var cache: ThumbnailCache
+
+    var body: some View {
+        Group {
+            if let image = cache.thumbnails[item.path] {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .transition(.opacity)
+            } else {
+                ZStack {
+                    Rectangle()
+                        .fill(.quaternary)
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+        }
+        .onAppear {
+            cache.loadThumbnail(for: item, using: appState)
+        }
+    }
+}
+
+// MARK: - NSImage Resize Helper
+
+extension NSImage {
+    /// Resize the image to fit within the given size, maintaining aspect ratio.
+    func resized(to targetSize: NSSize) -> NSImage {
+        let ratioW = targetSize.width / size.width
+        let ratioH = targetSize.height / size.height
+        let ratio = min(ratioW, ratioH)
+
+        let newSize = NSSize(
+            width: size.width * ratio,
+            height: size.height * ratio
+        )
+
+        let newImage = NSImage(size: newSize)
+        newImage.lockFocus()
+        draw(
+            in: NSRect(origin: .zero, size: newSize),
+            from: NSRect(origin: .zero, size: size),
+            operation: .copy,
+            fraction: 1.0
+        )
+        newImage.unlockFocus()
+        return newImage
+    }
 }
 

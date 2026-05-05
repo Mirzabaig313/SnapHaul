@@ -10,17 +10,8 @@ import os
 
 /// File Provider extension — mounts the Android device as a Finder volume.
 ///
-/// Data flow for Android → Mac (user drags file out of device in Finder):
-///   macOS calls fetchContents → extension calls XPC pullFile → host app
-///   calls MTP/ADB engine → file written to temp URL → returned to macOS
-///
-/// Data flow for Mac → Android (user drags file into device in Finder):
-///   macOS calls createItem with a local URL → extension calls XPC pushFile
-///   → host app calls MTP/ADB engine → file written to device
-///
-/// All XPC calls are synchronous from the File Provider's perspective
-/// (using DispatchSemaphore) because NSFileProviderReplicatedExtension
-/// completion handlers are not async-aware.
+/// Communicates with the host app via XPC for all device I/O.
+/// Includes idle termination (60s) to reclaim memory when not in use.
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     private let logger = Logger(
@@ -29,14 +20,15 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     )
 
     let domain: NSFileProviderDomain
-
-    // Cached XPC connection to the host app.
     private var _xpcConnection: NSXPCConnection?
+    private var idleTimer: DispatchSourceTimer?
+    private static let idleTimeout: TimeInterval = 60
 
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         super.init()
         logger.info("File Provider initialized for domain: \(domain.displayName)")
+        resetIdleTimer()
     }
 
     // MARK: - XPC
@@ -63,6 +55,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     }
 
     private func hostApp() -> SnapHaulXPCProtocol? {
+        resetIdleTimer()
         guard let conn = xpcConnection else { return nil }
         return conn.remoteObjectProxyWithErrorHandler { [weak self] error in
             self?.logger.error("XPC proxy error: \(error.localizedDescription)")
@@ -74,8 +67,27 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     func invalidate() {
         logger.info("File Provider invalidated")
+        idleTimer?.cancel()
+        idleTimer = nil
         _xpcConnection?.invalidate()
         _xpcConnection = nil
+    }
+
+    /// Reset the idle timer. After 60s of inactivity, the XPC connection
+    /// is released and macOS can terminate the extension process.
+    private func resetIdleTimer() {
+        idleTimer?.cancel()
+
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.schedule(deadline: .now() + Self.idleTimeout)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.logger.info("Idle timeout reached — releasing resources")
+            self._xpcConnection?.invalidate()
+            self._xpcConnection = nil
+        }
+        timer.resume()
+        idleTimer = timer
     }
 
     // MARK: - Item lookup

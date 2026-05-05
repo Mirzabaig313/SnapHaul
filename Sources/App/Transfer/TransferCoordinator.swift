@@ -9,12 +9,9 @@ import os
 
 /// Central transfer queue manager.
 ///
-/// Schedules file transfers, tracks per-file and overall progress,
-/// handles retries with exponential backoff, and enforces concurrency limits.
-///
-/// Uses `pullFile(from:to:)` for streaming transfers — files are written
-/// directly to disk without loading into memory. Progress is reported
-/// via a callback after each file completes.
+/// Schedules file transfers, tracks progress, handles retries with exponential
+/// backoff, and enforces concurrency limits. Adapts behavior based on power
+/// state and calibrated USB throughput.
 actor TransferCoordinator {
 
     private let logger = Logger(
@@ -22,36 +19,36 @@ actor TransferCoordinator {
         category: "transfer"
     )
 
-    /// Maximum concurrent transfer streams.
-    /// MTP is single-threaded (libmtp limitation) so only 1 stream.
-    /// ADB supports parallel pulls — default 4, reduced to 2 on battery.
     private var maxConcurrentStreams: Int = 4
-
-    /// Maximum errors to accumulate before dropping further error details.
-    /// Prevents unbounded memory growth on large transfers with high failure rates.
     private static let maxErrorsRetained = 500
 
-    /// Determine the concurrency limit based on the engine type.
-    ///
-    /// MTP (libmtp) is single-threaded — concurrent calls just queue on the
-    /// actor, wasting task slots. ADB can run parallel `adb pull` processes.
-    private func concurrencyLimit(for engine: any TransferEngine) -> Int {
-        if engine is MTPEngine {
-            return 1
-        }
-        return maxConcurrentStreams
+    private var throughputSamples: [Double] = []
+    private(set) var calibratedThroughput: Double = 0
+    private var isCalibrated: Bool { throughputSamples.count >= 3 }
+
+    private var currentQoS: DispatchQoS.QoSClass = .utility
+
+    /// Update concurrency and QoS based on power state.
+    func updatePowerSettings(isOnBattery: Bool, isAppForeground: Bool) {
+        maxConcurrentStreams = isOnBattery ? 2 : 4
+        currentQoS = resolveQoS(isOnBattery: isOnBattery, isAppForeground: isAppForeground)
+        logger.info("Power settings: concurrency=\(self.maxConcurrentStreams), QoS=\(String(describing: self.currentQoS))")
     }
 
-    /// Maximum retry attempts per file.
-    private let maxRetries = 3
+    private func resolveQoS(isOnBattery: Bool, isAppForeground: Bool) -> DispatchQoS.QoSClass {
+        if !isAppForeground { return .background }
+        return isOnBattery ? .utility : .userInitiated
+    }
 
-    /// Base delay for exponential backoff in nanoseconds (500ms).
+    private func concurrencyLimit(for engine: any TransferEngine) -> Int {
+        engine is MTPEngine ? 1 : maxConcurrentStreams
+    }
+
+    private let maxRetries = 3
     private let baseRetryDelay: UInt64 = 500_000_000
 
     private var isPaused = false
     private var isCancelled = false
-
-    /// Accumulated state for progress reporting.
     private var completedFiles = 0
     private var transferredBytes: UInt64 = 0
     private var errors: [TransferError] = []
@@ -59,17 +56,6 @@ actor TransferCoordinator {
     // MARK: - Transfer
 
     /// Transfer a batch of files from the device to a local destination.
-    ///
-    /// Uses `pullFile(from:to:)` for streaming — no file is loaded into memory.
-    /// Progress is reported after each file completes.
-    ///
-    /// - Parameters:
-    ///   - files: Files to transfer (from `listFiles`).
-    ///   - engine: The transfer engine (MTP or ADB).
-    ///   - destinationBase: Local directory to write files into.
-    ///   - profileName: Profile name shown in progress updates.
-    ///   - progressHandler: Called on each file completion with current progress.
-    /// - Returns: Summary of the transfer session.
     func transferFiles(
         _ files: [FileItem],
         using engine: any TransferEngine,
@@ -77,7 +63,6 @@ actor TransferCoordinator {
         profileName: String = "",
         progressHandler: @escaping @Sendable (TransferProgress) -> Void
     ) async throws -> TransferSummary {
-        // Reset state
         isPaused = false
         isCancelled = false
         completedFiles = 0
@@ -90,34 +75,25 @@ actor TransferCoordinator {
 
         logger.info("Starting transfer: \(totalFiles) files, \(totalBytes) bytes")
 
-        // Ensure destination exists
         try FileManager.default.createDirectory(
             at: destinationBase,
             withIntermediateDirectories: true
         )
 
         let concurrency = concurrencyLimit(for: engine)
-        logger.debug("Concurrency limit: \(concurrency) (engine: \(type(of: engine)))")
 
-        // Process files with bounded concurrency
         try await withThrowingTaskGroup(of: SingleFileResult.self) { group in
             var pending = files.makeIterator()
             var inFlight = 0
 
-            // Seed initial batch up to concurrency limit
             while inFlight < concurrency, let file = pending.next() {
                 guard !isCancelled else { break }
                 inFlight += 1
                 group.addTask {
-                    await self.transferSingleFile(
-                        file,
-                        using: engine,
-                        to: destinationBase
-                    )
+                    await self.transferSingleFile(file, using: engine, to: destinationBase)
                 }
             }
 
-            // As each completes, report progress and start the next
             for try await result in group {
                 inFlight -= 1
 
@@ -127,18 +103,15 @@ actor TransferCoordinator {
                     transferredBytes += bytesWritten
                 case .failure(let error):
                     completedFiles += 1
-                    // Cap retained errors to prevent unbounded memory growth
-                    // on large transfers with high failure rates.
                     if errors.count < Self.maxErrorsRetained {
                         errors.append(error)
                     }
                 }
 
-                // Report progress
                 let elapsed = Date().timeIntervalSince(startTime)
                 let bytesPerSecond = elapsed > 0 ? UInt64(Double(transferredBytes) / elapsed) : 0
 
-                let progress = TransferProgress(
+                progressHandler(TransferProgress(
                     profileName: profileName,
                     totalFiles: totalFiles,
                     completedFiles: completedFiles,
@@ -149,25 +122,19 @@ actor TransferCoordinator {
                     bytesPerSecond: bytesPerSecond,
                     startTime: startTime,
                     errors: errors
-                )
-                progressHandler(progress)
+                ))
 
-                // Start next file if available
                 if let nextFile = pending.next(), !isCancelled {
                     inFlight += 1
                     group.addTask {
-                        await self.transferSingleFile(
-                            nextFile,
-                            using: engine,
-                            to: destinationBase
-                        )
+                        await self.transferSingleFile(nextFile, using: engine, to: destinationBase)
                     }
                 }
             }
         }
 
         let duration = Date().timeIntervalSince(startTime)
-        logger.info("Transfer complete: \(self.completedFiles)/\(totalFiles) files, \(self.transferredBytes) bytes in \(String(format: "%.1f", duration))s")
+        logger.info("Transfer complete: \(self.completedFiles)/\(totalFiles) in \(String(format: "%.1f", duration))s")
 
         return TransferSummary(
             totalFiles: totalFiles,
@@ -179,10 +146,7 @@ actor TransferCoordinator {
         )
     }
 
-    /// Transfer a single file with retry logic.
-    ///
-    /// Uses `pullFile(from:to:)` for streaming — the file is written
-    /// directly to disk by the engine, never loaded into memory.
+    /// Transfer a single file with retry and throughput calibration.
     private func transferSingleFile(
         _ file: FileItem,
         using engine: any TransferEngine,
@@ -191,33 +155,37 @@ actor TransferCoordinator {
         let destinationURL = destinationBase.appendingPathComponent(file.name)
 
         for attempt in 1...maxRetries {
-            // Check pause/cancel
             while isPaused {
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
-            if isCancelled {
-                return .success(0)
-            }
+            if isCancelled { return .success(0) }
 
             do {
+                let fileStart = Date()
+
                 let bytesWritten = try await engine.pullFile(
                     from: file.path,
                     to: destinationURL,
                     progress: nil
                 )
 
-                // Set F_NOCACHE on the written file to avoid polluting buffer cache
                 setNoCacheFlag(at: destinationURL)
 
-                logger.debug("Transferred: \(file.name, privacy: .private(mask: .hash)) (\(bytesWritten) bytes)")
+                if !isCalibrated && bytesWritten > 0 {
+                    let elapsed = Date().timeIntervalSince(fileStart)
+                    if elapsed > 0.01 {
+                        throughputSamples.append(Double(bytesWritten) / elapsed)
+                        if isCalibrated {
+                            calibratedThroughput = throughputSamples.reduce(0, +) / Double(throughputSamples.count)
+                            logger.info("Throughput calibrated: \(String(format: "%.1f", self.calibratedThroughput / 1_000_000)) MB/s")
+                        }
+                    }
+                }
+
                 return .success(bytesWritten)
 
             } catch {
-                logger.warning(
-                    "Transfer attempt \(attempt)/\(self.maxRetries) failed for \(file.name, privacy: .private(mask: .hash)): \(error.localizedDescription)"
-                )
-
-                // Clean up partial file
+                logger.warning("Attempt \(attempt)/\(self.maxRetries) failed: \(file.name, privacy: .private(mask: .hash))")
                 try? FileManager.default.removeItem(at: destinationURL)
 
                 if attempt < maxRetries {
@@ -242,21 +210,37 @@ actor TransferCoordinator {
         ))
     }
 
-    /// Set F_NOCACHE on a file to hint the OS not to cache future reads.
-    ///
-    /// KNOWN LIMITATION: This is applied after the file is written and closed.
-    /// The write data is already in the buffer cache by this point. Setting
-    /// F_NOCACHE on a new O_RDONLY fd only prevents future read caching, not
-    /// write caching. True write-through requires F_NOCACHE on the fd *before*
-    /// writing, which isn't possible when the engine (libmtp/adb) manages its
-    /// own file descriptors. A custom streaming implementation (Phase 3+)
-    /// would allow setting F_NOCACHE before the first write.
+    /// Prevent buffer cache pollution on transferred files.
     private func setNoCacheFlag(at url: URL) {
         let fd = open(url.path, O_RDONLY)
         if fd >= 0 {
             _ = fcntl(fd, F_NOCACHE, 1)
             close(fd)
         }
+    }
+
+    // MARK: - Adaptive Chunk Sizing
+
+    /// Recommended chunk size based on file size and calibrated throughput.
+    func recommendedChunkSize(for fileSize: UInt64) -> Int {
+        if isCalibrated && calibratedThroughput < 25_000_000 {
+            return 1_048_576
+        }
+
+        switch fileSize {
+        case 0..<1_048_576:
+            return Int(fileSize)
+        case 1_048_576..<104_857_600:
+            return 4_194_304
+        case 104_857_600..<1_073_741_824:
+            return 8_388_608
+        default:
+            return 16_777_216
+        }
+    }
+
+    var isUSB2Speed: Bool {
+        isCalibrated && calibratedThroughput < 25_000_000
     }
 
     // MARK: - Control
@@ -286,13 +270,11 @@ actor TransferCoordinator {
 
 // MARK: - Result Types
 
-/// Result of transferring a single file.
 private enum SingleFileResult: Sendable {
     case success(UInt64)
     case failure(TransferError)
 }
 
-/// Summary of a completed transfer session.
 struct TransferSummary: Sendable {
     let totalFiles: Int
     let completedFiles: Int
@@ -307,8 +289,7 @@ struct TransferSummary: Sendable {
     }
 
     var formattedSpeed: String {
-        let mbps = Double(averageSpeed) / 1_000_000
-        return String(format: "%.1f MB/s", mbps)
+        String(format: "%.1f MB/s", Double(averageSpeed) / 1_000_000)
     }
 
     var formattedDuration: String {

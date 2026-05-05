@@ -131,7 +131,6 @@ brew install libmtp libusb xcodegen
 
 # Clone
 git clone https://github.com/user/snaphaul.git
-cd snaphaul/MediaIngestPro
 
 # Build and run via SPM (no Xcode project needed)
 swift build
