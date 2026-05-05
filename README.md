@@ -22,21 +22,9 @@ Plug in your Android phone via USB — or connect over Wi-Fi. SnapHaul detects i
 
 ## Screenshots
 
-```
-┌──────────┬──────────────────────────────────────────────┐
-│ Sidebar  │  /DCIM/Camera                    12 items    │
-│          │  ┌────┬──────────────┬────────┬──────┬─────┐ │
-│ 📱Device │  │    │ Name         │ Size   │ Date │ Type│ │
-│ 📂DCIM   │  ├────┼──────────────┼────────┼──────┼─────┤ │
-│ 📂Down.. │  │ 🖼 │ IMG_001.dng  │ 48.2MB │ May 3│ DNG │ │
-│ 📂Movies │  │ 🖼 │ IMG_002.dng  │ 47.8MB │ May 3│ DNG │ │
-│ 📂Music  │  │ 🎬 │ VID_001.mp4  │ 2.1 GB │ May 3│ MP4 │ │
-│ 📂Docs   │  │ 📁 │ Screenshots  │ —      │ Apr 2│ Dir │ │
-│          │  └────┴──────────────┴────────┴──────┴─────┘ │
-│ Profiles │                                              │
-│ 📷Photo  │  2 selected · 96.0 MB    [Copy to Mac]      │
-└──────────┴──────────────────────────────────────────────┘
-```
+![SnapHaul Main Window](Resources/image.png)
+
+![SnapHaul Menu Bar](Resources/menubar.png)
 
 ---
 
