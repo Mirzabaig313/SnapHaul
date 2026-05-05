@@ -22,10 +22,7 @@ Plug in your Android phone via USB — or connect over Wi-Fi. SnapHaul detects i
 
 ## Screenshots
 
-![SnapHaul Main Window](Resources/image.png)
-
-![SnapHaul Menu Bar](Resources/menubar.png)
-
+<img src="Resources/image.png" alt="SnapHaul Main Window" width="550">
 ---
 
 ## Features
