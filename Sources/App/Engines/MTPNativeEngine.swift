@@ -118,12 +118,12 @@ actor MTPNativeEngine: TransferEngine {
         self.vendorID = device.vendorID
         self.handleCache = ["/": 0xFFFFFFFF]
 
-        // Load vendor-specific quirk profile
-        self.deviceProfile = DeviceQuirks.profile(for: device.vendorID)
+        // Load vendor-specific quirk profile (with model-level overrides)
+        self.deviceProfile = DeviceQuirks.profile(for: device.vendorID, productName: device.displayName)
         if !deviceProfile.quirks.isEmpty {
             logger.info("Quirks loaded for \(self.deviceProfile.vendorName): \(String(describing: self.deviceProfile.quirks))")
         }
-        if DeviceQuirks.shouldPreferADB(vendorID: device.vendorID) {
+        if DeviceQuirks.shouldPreferADB(vendorID: device.vendorID, productName: device.displayName) {
             logger.info("ADB recommended for \(self.deviceProfile.vendorName) — MTP is slow on this device")
         }
 

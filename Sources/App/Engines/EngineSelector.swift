@@ -30,8 +30,8 @@ struct EngineSelector {
         }
 
         if adbAvailable && userPreference == "auto"
-            && DeviceQuirks.shouldPreferADB(vendorID: device.vendorID) {
-            let profile = DeviceQuirks.profile(for: device.vendorID)
+            && DeviceQuirks.shouldPreferADB(vendorID: device.vendorID, productName: device.displayName) {
+            let profile = DeviceQuirks.profile(for: device.vendorID, productName: device.displayName)
             logger.info("Selected ADB engine (\(profile.vendorName) MTP is slow) for \(device.displayName)")
             return ADBEngine()
         }
@@ -42,6 +42,6 @@ struct EngineSelector {
 
     func shouldSuggestADB(for device: USBDevice, adbAvailable: Bool) -> Bool {
         guard !adbAvailable else { return false }
-        return DeviceQuirks.shouldPreferADB(vendorID: device.vendorID)
+        return DeviceQuirks.shouldPreferADB(vendorID: device.vendorID, productName: device.displayName)
     }
 }

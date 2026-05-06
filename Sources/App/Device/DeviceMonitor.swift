@@ -44,25 +44,38 @@ final class DeviceMonitor: @unchecked Sendable {
     /// Must be released exactly once during cleanup.
     private var retainedSelf: Unmanaged<DeviceMonitor>?
 
-    /// Known Android USB vendor IDs.
+    /// Known Android USB vendor IDs → manufacturer label.
+    /// Used for display purposes. Detection gate uses `knownAndroidVIDs` (broader set).
     private static let androidVendors: [UInt16: String] = [
         0x04E8: "Samsung",
         0x18D1: "Google",
         0x054C: "Sony",
         0x2717: "Xiaomi",
-        0x2A70: "OnePlus",
+        0x2A70: "OPPO",
+        0x22D9: "OnePlus",
         0x22B8: "Motorola",
-        0x2916: "Google (Pixel)",
         0x1004: "LG",
         0x0BB4: "HTC",
         0x12D1: "Huawei",
         0x2A45: "Meizu",
-        0x0FCE: "Sony Ericsson",
+        0x0FCE: "Sony",
         0x19D2: "ZTE",
         0x1532: "Razer",
-        0x0E8D: "MediaTek",
-        0x2B4C: "Nothing",
+        0x2D95: "vivo",
+        0x3511: "Honor",
+        0x2A96: "realme",
     ]
+
+    /// Broader set of VIDs that indicate an Android device, including chipset-vendor
+    /// VIDs used by brands we can't identify by VID alone (e.g., MediaTek for Transsion).
+    /// Devices matching these VIDs pass the detection gate; brand is resolved later
+    /// via the USB product string in DeviceQuirks.
+    private static let knownAndroidVIDs: Set<UInt16> = {
+        var vids = Set(androidVendors.keys)
+        vids.insert(0x0E8D)  // MediaTek — used by Transsion (Tecno, Infinix, itel)
+        vids.insert(0x2B4C)  // ZUK/Beijing SHENQI — possibly Nothing
+        return vids
+    }()
 
     // MARK: - Start / Stop
 
@@ -253,7 +266,9 @@ final class DeviceMonitor: @unchecked Sendable {
 
     /// Extract USB device properties from an IOKit service object.
     ///
-    /// Returns nil if the device is not an Android device (based on vendor ID).
+    /// Returns nil if the device is not a known Android device.
+    /// Uses `knownAndroidVIDs` (broad set) for the detection gate, and
+    /// `androidVendors` (labeled dictionary) for the manufacturer display name.
     private func extractDeviceInfo(from service: io_service_t) -> USBDevice? {
         var props: Unmanaged<CFMutableDictionary>?
         let result = IORegistryEntryCreateCFProperties(
@@ -268,10 +283,13 @@ final class DeviceMonitor: @unchecked Sendable {
         let vendorID = (dict["idVendor"] as? Int).map { UInt16($0) } ?? 0
         let productID = (dict["idProduct"] as? Int).map { UInt16($0) } ?? 0
 
-        // Filter: only process known Android vendors
-        guard let manufacturer = Self.androidVendors[vendorID] else {
+        // Gate: only process devices with known Android VIDs
+        guard Self.knownAndroidVIDs.contains(vendorID) else {
             return nil
         }
+
+        // Label: use the vendor dictionary if available, otherwise derive from product string
+        let manufacturer = Self.androidVendors[vendorID] ?? "Android"
 
         let productName = dict["USB Product Name"] as? String
             ?? dict["Product Name"] as? String
