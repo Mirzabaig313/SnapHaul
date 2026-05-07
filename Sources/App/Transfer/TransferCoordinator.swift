@@ -49,7 +49,7 @@ actor TransferCoordinator {
     }
 
     private func concurrencyLimit(for engine: any TransferEngine) -> Int {
-        (engine is MTPEngine || engine is MTPNativeEngine) ? 1 : maxConcurrentStreams
+        (engine is MTPNativeEngine) ? 1 : maxConcurrentStreams
     }
 
     private let maxRetries = 3

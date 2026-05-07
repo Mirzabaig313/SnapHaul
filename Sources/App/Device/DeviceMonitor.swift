@@ -67,9 +67,7 @@ final class DeviceMonitor: @unchecked Sendable {
     ]
 
     /// Broader set of VIDs that indicate an Android device, including chipset-vendor
-    /// VIDs used by brands we can't identify by VID alone (e.g., MediaTek for Transsion).
-    /// Devices matching these VIDs pass the detection gate; brand is resolved later
-    /// via the USB product string in DeviceQuirks.
+    /// VIDs used by brands we can't identify by VID alone.
     private static let knownAndroidVIDs: Set<UInt16> = {
         var vids = Set(androidVendors.keys)
         vids.insert(0x0E8D)  // MediaTek — used by Transsion (Tecno, Infinix, itel)

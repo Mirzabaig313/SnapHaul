@@ -14,7 +14,6 @@
 		162C63E608E6675A85764B96 /* ADBEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F185075D38B3571DE729459 /* ADBEngine.swift */; };
 		1873910F71A5643011E31FAE /* FileTypeFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 743A4F975FF2847E54C14232 /* FileTypeFilterTests.swift */; };
 		1A939108CDA13F754B60108C /* ChecksumVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5687885620EA532438F935BB /* ChecksumVerifier.swift */; };
-		1C59475F5DF23CBA451CA9FC /* MTPEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C3FED8D587F0A1E2521D19 /* MTPEngine.swift */; };
 		1E5787D1F2C1FE9C860E0782 /* ADBError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 071038FEED68C865C955A576 /* ADBError.swift */; };
 		1E63AE62ED85E149B56FDF09 /* SecurityScopedBookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = B66A3BBEE1FBD03F31E5FDA2 /* SecurityScopedBookmark.swift */; };
 		20CB38657443C7116AB58D95 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E3769C3257F86E1584A4610 /* AppState.swift */; };
@@ -153,7 +152,6 @@
 		50F86E20F0527F5941B68502 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		5687885620EA532438F935BB /* ChecksumVerifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecksumVerifier.swift; sourceTree = "<group>"; };
 		5BA6259357AFD5423E0CEDCF /* module.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = module.modulemap; sourceTree = "<group>"; };
-		6438DD254F4049C649BF1A6C /* shim.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = shim.h; sourceTree = "<group>"; };
 		647F1A7741945104E28FDC44 /* FileTypeRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTypeRegistry.swift; sourceTree = "<group>"; };
 		6B0A290C56579BEEFF174936 /* TransferEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferEngine.swift; sourceTree = "<group>"; };
 		6D09067E4B015D4366A259CA /* IngestProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IngestProfile.swift; sourceTree = "<group>"; };
@@ -185,7 +183,6 @@
 		B955D71E35572DF31EDA46C8 /* FileOrganizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileOrganizer.swift; sourceTree = "<group>"; };
 		C1AE712F49318D45654C0A86 /* MTPTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MTPTest.swift; sourceTree = "<group>"; };
 		C5ADF93B4763ED03F558CA0A /* ManifestStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestStore.swift; sourceTree = "<group>"; };
-		C5C3FED8D587F0A1E2521D19 /* MTPEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MTPEngine.swift; sourceTree = "<group>"; };
 		C9BE3FF2A2D4395ED165CF00 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		CB6F1C9E95E1DD8B33DCD706 /* FileProviderEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderEnumerator.swift; sourceTree = "<group>"; };
 		CD424AABD9D040B7F4CD3D5B /* ProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileStore.swift; sourceTree = "<group>"; };
@@ -195,7 +192,6 @@
 		D5D510729F961BBECE8CB3C6 /* NamingTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NamingTemplate.swift; sourceTree = "<group>"; };
 		D6BC099B621C386B5CE4CD14 /* DeviceBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceBrowserView.swift; sourceTree = "<group>"; };
 		D7E8A85FD16DF5DCBF1CA136 /* IngestReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IngestReport.swift; sourceTree = "<group>"; };
-		DB14495AB26946E08E0D7D2E /* module.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = module.modulemap; sourceTree = "<group>"; };
 		E6865FE32B60E5FD8B8F67E9 /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
 		E813CF434050AEF821218BCB /* MTPNativeEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MTPNativeEngine.swift; sourceTree = "<group>"; };
 		F770AD4BC9669439F5A28DE5 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
@@ -278,7 +274,6 @@
 			children = (
 				2F185075D38B3571DE729459 /* ADBEngine.swift */,
 				A82E0CF8031A7CCBE6FA8166 /* EngineSelector.swift */,
-				C5C3FED8D587F0A1E2521D19 /* MTPEngine.swift */,
 				E813CF434050AEF821218BCB /* MTPNativeEngine.swift */,
 				6B0A290C56579BEEFF174936 /* TransferEngine.swift */,
 			);
@@ -458,20 +453,10 @@
 			path = Notifications;
 			sourceTree = "<group>";
 		};
-		C808589F630DC13F86A64EB2 /* CLibMTP */ = {
-			isa = PBXGroup;
-			children = (
-				DB14495AB26946E08E0D7D2E /* module.modulemap */,
-				6438DD254F4049C649BF1A6C /* shim.h */,
-			);
-			path = CLibMTP;
-			sourceTree = "<group>";
-		};
 		CAD21BD49E68C2EC539D4980 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
 				F7FDF218092A3E8D61579E1F /* App */,
-				C808589F630DC13F86A64EB2 /* CLibMTP */,
 				B4885BE289C925621B2D1F3C /* CMTPCore */,
 				20E0A137C1BF644C60E67518 /* CTransferUtils */,
 				3B3055A7180CD6D524C07EDF /* FileProviderExtension */,
@@ -543,7 +528,7 @@
 				8D6593ED95AAAE75B0EDE0BC /* Frameworks */,
 				71D60A6F4501789546AA02B0 /* Embed Foundation Extensions */,
 				3EA29249B5581CA8B01D696B /* Embed Frameworks */,
-				B5FD7897D010524B796D5035 /* Copy & Sign libmtp/libusb */,
+				9068BF307430CD29F1B809F8 /* Copy & Sign libusb */,
 			);
 			buildRules = (
 			);
@@ -682,7 +667,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		B5FD7897D010524B796D5035 /* Copy & Sign libmtp/libusb */ = {
+		9068BF307430CD29F1B809F8 /* Copy & Sign libusb */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -692,7 +677,7 @@
 			);
 			inputPaths = (
 			);
-			name = "Copy & Sign libmtp/libusb";
+			name = "Copy & Sign libusb";
 			outputFileListPaths = (
 			);
 			outputPaths = (
@@ -751,7 +736,6 @@
 				5E4BF64611FBF5DA53931554 /* FileOrganizer.swift in Sources */,
 				10F05BCA26DDF2DEA4407F67 /* IngestEngine.swift in Sources */,
 				27F6A54FB7C721FAAA12004A /* IngestProfile.swift in Sources */,
-				1C59475F5DF23CBA451CA9FC /* MTPEngine.swift in Sources */,
 				961D679B89CD4B94C9B80F07 /* MTPNativeEngine.swift in Sources */,
 				ECEC6518BF59CEF2D54A7CC6 /* MTPTest.swift in Sources */,
 				B89CE61139EF8EDF14A4780F /* MainWindowView.swift in Sources */,
@@ -899,7 +883,7 @@
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-				SWIFT_VERSION = 5.10;
+				SWIFT_VERSION = 6.3.1;
 			};
 			name = Debug;
 		};
@@ -958,7 +942,7 @@
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				SWIFT_VERSION = 5.10;
+				SWIFT_VERSION = 6.3.1;
 			};
 			name = Release;
 		};
@@ -1021,16 +1005,16 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Resources/SnapHaul.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				HEADER_SEARCH_PATHS = "/opt/homebrew/opt/libmtp/include /opt/homebrew/opt/libusb/include /opt/homebrew/opt/libusb/include/libusb-1.0 $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include";
+				HEADER_SEARCH_PATHS = "/opt/homebrew/opt/libusb/include /opt/homebrew/opt/libusb/include/libusb-1.0 $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include";
 				INFOPLIST_FILE = Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
-				LIBRARY_SEARCH_PATHS = "/opt/homebrew/opt/libmtp/lib /opt/homebrew/opt/libusb/lib";
-				OTHER_LDFLAGS = "-lmtp -lusb-1.0";
+				LIBRARY_SEARCH_PATHS = "/opt/homebrew/opt/libusb/lib /opt/homebrew/opt/libmtp/lib";
+				OTHER_LDFLAGS = "-lusb-1.0 -lmtp";
 				PRODUCT_BUNDLE_IDENTIFIER = com.snaphaul.app;
 				PRODUCT_NAME = SnapHaul;
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CLibMTP $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include";
 			};
 			name = Release;
 		};
@@ -1069,16 +1053,16 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Resources/SnapHaul.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				HEADER_SEARCH_PATHS = "/opt/homebrew/opt/libmtp/include /opt/homebrew/opt/libusb/include /opt/homebrew/opt/libusb/include/libusb-1.0 $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include";
+				HEADER_SEARCH_PATHS = "/opt/homebrew/opt/libusb/include /opt/homebrew/opt/libusb/include/libusb-1.0 $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include";
 				INFOPLIST_FILE = Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
-				LIBRARY_SEARCH_PATHS = "/opt/homebrew/opt/libmtp/lib /opt/homebrew/opt/libusb/lib";
-				OTHER_LDFLAGS = "-lmtp -lusb-1.0";
+				LIBRARY_SEARCH_PATHS = "/opt/homebrew/opt/libusb/lib /opt/homebrew/opt/libmtp/lib";
+				OTHER_LDFLAGS = "-lusb-1.0 -lmtp";
 				PRODUCT_BUNDLE_IDENTIFIER = com.snaphaul.app;
 				PRODUCT_NAME = SnapHaul;
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CLibMTP $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include";
 			};
 			name = Debug;
 		};

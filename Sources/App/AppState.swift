@@ -7,7 +7,7 @@ import Foundation
 import SwiftUI
 import FileProvider
 import Combine
-import GRDB
+internal import GRDB
 import SnapHaulKit
 import os
 
@@ -150,13 +150,17 @@ final class AppState: ObservableObject {
             forName: NSApplication.didBecomeActiveNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            self?.powerManager.isAppForeground = true
+            Task { @MainActor in
+                self?.powerManager.isAppForeground = true
+            }
         }
         NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            self?.powerManager.isAppForeground = false
+            Task { @MainActor in
+                self?.powerManager.isAppForeground = false
+            }
         }
     }
 

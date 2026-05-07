@@ -702,22 +702,24 @@ struct MainWindowView: View {
         let urlProviders = providers.filter { $0.canLoadObject(ofClass: URL.self) }
         guard !urlProviders.isEmpty else { return }
 
-        var fileURLs: [URL] = []
-        let group = DispatchGroup()
-
-        for provider in urlProviders {
-            group.enter()
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                defer { group.leave() }
-                if let url, url.isFileURL {
+        Task { @MainActor in
+            var fileURLs: [URL] = []
+            for provider in urlProviders {
+                if let url = await loadURL(from: provider), url.isFileURL {
                     fileURLs.append(url)
                 }
             }
-        }
-
-        group.notify(queue: .main) {
             guard !fileURLs.isEmpty else { return }
             self.pushFilesToDevice(fileURLs)
+        }
+    }
+
+    /// Load a URL from an NSItemProvider using async/await.
+    private func loadURL(from provider: NSItemProvider) async -> URL? {
+        await withCheckedContinuation { continuation in
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                continuation.resume(returning: url)
+            }
         }
     }
 

@@ -6,213 +6,168 @@
 #if DEBUG
 import Foundation
 import SnapHaulKit
-import CLibMTP
+import CMTPCore
 import os
 
-/// Standalone test for MTP device connectivity and file transfer.
+/// Standalone test for native MTP device connectivity and file listing.
 ///
-/// Run from the command line to verify libmtp integration works:
+/// Run from the command line:
 /// ```
 /// swift build && .build/debug/SnapHaul --test-mtp
 /// ```
 ///
 /// Connect an Android phone in MTP (File Transfer) mode before running.
-/// The test will list root files and optionally transfer a small file.
+/// Tries common Android vendor IDs sequentially until one connects.
 enum MTPTest {
 
-    /// MTP uses 0xFFFFFFFF as the parent ID for the storage root.
-    private static let rootParentID: UInt32 = 0xFFFF_FFFF
+    private static let androidVIDs: [(vid: UInt16, pids: [UInt16], name: String)] = [
+        (0x2717, [0xFF40, 0xFF48, 0xFF80], "Xiaomi"),
+        (0x04E8, [0x6860, 0x6865, 0x6866], "Samsung"),
+        (0x18D1, [0x4EE1, 0x4EE2, 0xD001], "Google"),
+        (0x22D9, [0x2764, 0x2765], "OnePlus"),
+        (0x2A70, [0x9024, 0x9025], "OPPO"),
+        (0x22B8, [0x2E82, 0x2E76], "Motorola"),
+        (0x0FCE, [0x01A5, 0x51A5], "Sony"),
+        (0x2D95, [0x6003, 0x6005], "vivo"),
+    ]
 
     static func run() {
-        let logger = Logger(subsystem: "com.snaphaul.app", category: "test")
-        logger.info("Starting MTP test — ensure your Android device is connected in MTP mode...")
-
         print("╔══════════════════════════════════════════════════╗")
-        print("║  SnapHaul MTP Test                              ║")
+        print("║  SnapHaul Native MTP Test (CMTPCore + libusb)   ║")
         print("║  Ensure your Android device is connected        ║")
         print("║  and set to File Transfer (MTP) mode.           ║")
         print("╚══════════════════════════════════════════════════╝")
         print()
 
-        // Initialize libmtp.
-        LIBMTP_Init()
-        print("✓ libmtp initialized")
+        // Kill PTPCamera
+        let killTask = Process()
+        killTask.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
+        killTask.arguments = ["PTPCamera"]
+        killTask.standardOutput = FileHandle.nullDevice
+        killTask.standardError = FileHandle.nullDevice
+        try? killTask.run()
+        killTask.waitUntilExit()
+        if killTask.terminationStatus == 0 {
+            print("✓ Killed PTPCamera daemon")
+            Thread.sleep(forTimeInterval: 0.5)
+        }
 
-        // Detect raw devices.
-        var rawDevices: UnsafeMutablePointer<LIBMTP_raw_device_t>?
-        var numDevices: CInt = 0
-        let detectResult = LIBMTP_Detect_Raw_Devices(&rawDevices, &numDevices)
+        // Try each VID/PID combination
+        var usbInterface = mtp_usb_interface_t()
+        var transportCtx: UnsafeMutableRawPointer?
+        var connectedVendor = ""
 
-        guard detectResult == LIBMTP_ERROR_NONE,
-              let devices = rawDevices,
-              numDevices > 0 else {
-            print("✗ No MTP devices found (error code: \(detectResult.rawValue))")
+        print("🔍 Scanning for MTP devices...")
+
+        for (vid, pids, name) in androidVIDs {
+            for pid in pids {
+                let result = mtp_usb_transport_open(vid, pid, &usbInterface, &transportCtx)
+                if result == 0 {
+                    connectedVendor = name
+                    print("✓ Connected to \(name) (VID=\(String(format: "%04x", vid)) PID=\(String(format: "%04x", pid)))")
+                    break
+                }
+                // Clean up failed attempt
+                if let ctx = transportCtx {
+                    mtp_usb_transport_close(ctx)
+                    transportCtx = nil
+                }
+            }
+            if !connectedVendor.isEmpty { break }
+        }
+
+        guard !connectedVendor.isEmpty, let tCtx = transportCtx else {
+            print("✗ No MTP device found")
             print()
             print("Troubleshooting:")
             print("  1. Is your phone connected via USB?")
             print("  2. Is it set to 'File Transfer' / MTP mode?")
             print("  3. Is the screen unlocked?")
+            if let ctx = transportCtx {
+                print("  Last error: \(String(cString: mtp_usb_transport_error(ctx)))")
+                mtp_usb_transport_close(ctx)
+            }
             exit(1)
         }
 
-        print("✓ Found \(numDevices) raw MTP device(s)")
-        print()
-
-        // Open the first device.
-        guard let mtpDevice = LIBMTP_Open_Raw_Device_Uncached(&devices[0]) else {
-            print("✗ Failed to open MTP session with device")
-            free(rawDevices)
+        // Open MTP session
+        guard let session = mtp_session_create(4 * 1024 * 1024, usbInterface) else {
+            print("✗ Failed to allocate MTP session")
+            mtp_usb_transport_close(tCtx)
             exit(1)
         }
-        defer {
-            LIBMTP_Release_Device(mtpDevice)
-            free(rawDevices)
-        }
 
+        guard mtp_open_session(session) == 0 else {
+            let err = withUnsafeBytes(of: session.pointee.last_error) { buf in
+                let ptr = buf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                var len = 0
+                while len < buf.count && ptr[len] != 0 { len += 1 }
+                return String(bytes: UnsafeBufferPointer(start: ptr, count: len), encoding: .utf8) ?? "unknown"
+            }
+            print("✗ OpenSession failed: \(err)")
+            mtp_session_destroy(session)
+            mtp_usb_transport_close(tCtx)
+            exit(1)
+        }
         print("✓ MTP session opened")
+        print()
 
-        // Print device info.
-        printDeviceInfo(mtpDevice)
-
-        // Get storage.
-        let storageResult = LIBMTP_Get_Storage(mtpDevice, LIBMTP_STORAGE_SORTBY_NOTSORTED)
-        guard storageResult == 0, let storage = mtpDevice.pointee.storage else {
-            print("✗ Could not retrieve storage info")
+        // Storage info
+        let storageCount = mtp_get_storage_ids(session)
+        guard storageCount > 0 else {
+            print("✗ No storage found")
+            _ = mtp_close_session(session)
+            mtp_session_destroy(session)
+            mtp_usb_transport_close(tCtx)
             exit(1)
         }
 
-        let storageID = storage.pointee.id
-        let storageName = storage.pointee.StorageDescription
-            .flatMap { String(cString: $0) } ?? "unnamed"
-        let totalGB = Double(storage.pointee.MaxCapacity) / 1_073_741_824
-        let freeGB = Double(storage.pointee.FreeSpaceInBytes) / 1_073_741_824
-
-        print()
-        print("📦 Storage: \(storageName)")
-        print("   Total:   \(String(format: "%.1f", totalGB)) GB")
-        print("   Free:    \(String(format: "%.1f", freeGB)) GB")
-        print()
-
-        // List files at root.
-        print("📂 Root directory listing:")
-        print("   ─────────────────────────────────────────────")
-
-        let rootFiles = LIBMTP_Get_Files_And_Folders(
-            mtpDevice,
-            storageID,
-            rootParentID
-        )
-
-        var node = rootFiles
-        var fileCount = 0
-        var firstSmallFile: (id: UInt32, name: String, size: UInt64)?
-
-        while let current = node {
-            let file = current.pointee
-            let name = file.filename.flatMap { String(cString: $0) } ?? "?"
-            let isDir = file.filetype == LIBMTP_FILETYPE_FOLDER
-            let icon = isDir ? "📁" : "📄"
-            let sizeStr = isDir ? "" : " (\(ByteFormatter.format(file.filesize)))"
-
-            print("   \(icon) \(name)\(sizeStr)")
-            fileCount += 1
-
-            // Track the first small file (<1 MB) for transfer test.
-            if firstSmallFile == nil && !isDir && file.filesize > 0 && file.filesize < 1_048_576 {
-                firstSmallFile = (id: file.item_id, name: name, size: file.filesize)
-            }
-
-            let next = current.pointee.next
-            LIBMTP_destroy_file_t(current)
-            node = next
+        let storageID = session.pointee.storage_ids.0
+        var storageInfo = mtp_storage_info_t()
+        if mtp_get_storage_info(session, storageID, &storageInfo) == 0 {
+            let totalGB = Double(storageInfo.max_capacity) / 1_073_741_824
+            let freeGB = Double(storageInfo.free_space) / 1_073_741_824
+            print("📦 Storage: \(String(format: "%.1f", totalGB)) GB total, \(String(format: "%.1f", freeGB)) GB free")
         }
-
-        print("   ─────────────────────────────────────────────")
-        print("   \(fileCount) item(s)")
         print()
 
-        // Transfer test — pull the first small file to /tmp.
-        if let target = firstSmallFile {
-            print("📥 Transfer test: \(target.name) (\(ByteFormatter.format(target.size)))")
+        // List root
+        print("📂 Root directory:")
+        print("   ─────────────────────────────────────────────")
 
-            let destPath = "/tmp/snaphaul-mtp-test-\(target.name)"
-            let result = LIBMTP_Get_File_To_File(
-                mtpDevice,
-                target.id,
-                destPath,
-                nil,
-                nil
-            )
+        var handles = [UInt32](repeating: 0, count: 1000)
+        let count = mtp_get_object_handles(session, storageID, 0xFFFFFFFF, 0, &handles, 1000)
 
-            if result == 0 {
-                print("   ✓ Transferred to \(destPath)")
+        if count > 0 {
+            var infos = [mtp_object_info_t](repeating: mtp_object_info_t(), count: Int(count))
+            let infoCount = mtp_get_object_info_batch(session, &handles, &infos, count)
 
-                // Verify the file size matches.
-                if let attrs = try? FileManager.default.attributesOfItem(atPath: destPath),
-                   let localSize = attrs[.size] as? UInt64 {
-                    if localSize == target.size {
-                        print("   ✓ Size verified: \(ByteFormatter.format(localSize))")
-                    } else {
-                        print("   ⚠ Size mismatch: expected \(target.size), got \(localSize)")
-                    }
+            for i in 0..<Int(infoCount) {
+                let info = infos[i]
+                let name = withUnsafeBytes(of: info.filename) { buf in
+                    let ptr = buf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                    var len = 0
+                    while len < buf.count && ptr[len] != 0 { len += 1 }
+                    return String(bytes: UnsafeBufferPointer(start: ptr, count: len), encoding: .utf8) ?? "?"
                 }
-
-                // Clean up.
-                try? FileManager.default.removeItem(atPath: destPath)
-                print("   ✓ Temp file cleaned up")
-            } else {
-                print("   ✗ Transfer failed")
-                printMTPErrors(mtpDevice)
+                let isDir = info.object_format == MTP_FORMAT_ASSOCIATION
+                let icon = isDir ? "📁" : "📄"
+                let size = isDir ? "" : " (\(ByteFormatter.format(info.object_size_64)))"
+                print("   \(icon) \(name)\(size)")
             }
+            print("   ─────────────────────────────────────────────")
+            print("   \(infoCount) item(s)")
         } else {
-            print("ℹ No small files (<1 MB) at root to test transfer.")
-            print("  This is normal — most phones store files in subdirectories.")
+            print("   (empty or enumeration failed)")
         }
 
+        // Cleanup
         print()
-        print("✓ MTP test complete")
+        _ = mtp_close_session(session)
+        mtp_session_destroy(session)
+        mtp_usb_transport_close(tCtx)
+        print("✓ Native MTP test complete")
         exit(0)
-    }
-
-    // MARK: - Helpers
-
-    private static func printDeviceInfo(
-        _ dev: UnsafeMutablePointer<LIBMTP_mtpdevice_struct>
-    ) {
-        let model = extractCString(LIBMTP_Get_Modelname(dev)) ?? "unknown"
-        let manufacturer = extractCString(LIBMTP_Get_Manufacturername(dev)) ?? "unknown"
-        let serial = extractCString(LIBMTP_Get_Serialnumber(dev)) ?? "unknown"
-        let redactedSerial = serial.count > 4
-            ? "***" + String(serial.suffix(4))
-            : "****"
-
-        print()
-        print("📱 Device Info:")
-        print("   Model:        \(model)")
-        print("   Manufacturer: \(manufacturer)")
-        print("   Serial:       \(redactedSerial)")
-    }
-
-    private static func printMTPErrors(
-        _ dev: UnsafeMutablePointer<LIBMTP_mtpdevice_struct>
-    ) {
-        var errNode = LIBMTP_Get_Errorstack(dev)
-        while let err = errNode {
-            if let text = err.pointee.error_text {
-                print("   MTP error: \(String(cString: text))")
-            }
-            errNode = err.pointee.next
-        }
-        LIBMTP_Clear_Errorstack(dev)
-    }
-
-    private static func extractCString(
-        _ cStr: UnsafeMutablePointer<CChar>?
-    ) -> String? {
-        guard let ptr = cStr else { return nil }
-        let str = String(cString: ptr)
-        free(ptr)
-        return str
     }
 }
 #endif

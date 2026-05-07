@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import GRDB
+internal import GRDB
 import SnapHaulKit
 import os
 

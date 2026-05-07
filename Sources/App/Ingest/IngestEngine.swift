@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import GRDB
+internal import GRDB
 import SnapHaulKit
 import os
 
@@ -103,7 +103,7 @@ actor IngestEngine {
         // 5. Verify checksums
         var checksumPassed = 0
         var checksumFailed = 0
-        let isMTPEngine = engine is MTPEngine || engine is MTPNativeEngine
+        let isMTPEngine = engine is MTPNativeEngine
         if profile.checksumVerification && !isMTPEngine {
             for file in newFiles {
                 let localURL = stagingDirectory.appendingPathComponent(file.name)

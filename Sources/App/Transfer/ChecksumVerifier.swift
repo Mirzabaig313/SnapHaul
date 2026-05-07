@@ -5,7 +5,7 @@
 
 import Foundation
 import SnapHaulKit
-import CryptoKit
+internal import CryptoKit
 import os
 
 /// Verifies file integrity after transfer by comparing checksums.

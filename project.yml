@@ -19,7 +19,7 @@ packages:
 # ── Settings shared across all targets ────────────────────────────────────────
 settings:
   base:
-    SWIFT_VERSION: "5.10"
+    SWIFT_VERSION: "6.3.1"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
     ENABLE_HARDENED_RUNTIME: YES
@@ -53,7 +53,6 @@ targets:
     platform: macOS
     sources:
       - path: Sources/App
-      - path: Sources/CLibMTP
       - path: Sources/CTransferUtils
       - path: Sources/CMTPCore
       - path: Resources/AppIcon.icns
@@ -65,7 +64,7 @@ targets:
         embed: true
         codeSign: true
     postBuildScripts:
-      - name: "Copy & Sign libmtp/libusb"
+      - name: "Copy & Sign libusb"
         script: |
           "${SRCROOT}/scripts/copy-dylibs.sh"
         basedOnDependencyAnalysis: false
@@ -76,10 +75,10 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Resources/SnapHaul.entitlements
         LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
         PRODUCT_NAME: SnapHaul
-        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/Sources/CLibMTP $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include"
-        HEADER_SEARCH_PATHS: "/opt/homebrew/opt/libmtp/include /opt/homebrew/opt/libusb/include /opt/homebrew/opt/libusb/include/libusb-1.0 $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include"
-        LIBRARY_SEARCH_PATHS: "/opt/homebrew/opt/libmtp/lib /opt/homebrew/opt/libusb/lib"
-        OTHER_LDFLAGS: "-lmtp -lusb-1.0"
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include"
+        HEADER_SEARCH_PATHS: "/opt/homebrew/opt/libusb/include /opt/homebrew/opt/libusb/include/libusb-1.0 $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include"
+        LIBRARY_SEARCH_PATHS: "/opt/homebrew/opt/libusb/lib /opt/homebrew/opt/libmtp/lib"
+        OTHER_LDFLAGS: "-lusb-1.0 -lmtp"
       configs:
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG

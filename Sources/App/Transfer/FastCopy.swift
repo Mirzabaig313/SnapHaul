@@ -97,7 +97,7 @@ enum FastCopy {
 enum FastLsParser {
 
     static func parse(output: String, parentPath: String) -> [FileItem] {
-        let lineCount = output.utf8.lazy.filter { $0 == 0x0A }.count + 1
+        let lineCount = output.utf8.count(where: { $0 == 0x0A }) + 1
         let maxEntries = min(lineCount, 10_000)
         var entries = [ls_entry_t](repeating: ls_entry_t(), count: maxEntries)
 
@@ -209,7 +209,7 @@ enum FastXXH3 {
     private static func formatHash(_ hash: UInt64) -> String {
         var buf = [CChar](repeating: 0, count: 17)
         xxh3_format_hex(hash, &buf)
-        return String(cString: buf)
+        return String(decoding: buf.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 }
 
@@ -388,7 +388,7 @@ final class TransferBufferPool: @unchecked Sendable {
         }
         var hexBuf = [CChar](repeating: 0, count: 17)
         xxh3_format_hex(hash, &hexBuf)
-        return String(cString: hexBuf)
+        return String(decoding: hexBuf.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 
     /// Copy a file using a pool buffer. Avoids per-file allocation.

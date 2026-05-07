@@ -1,4 +1,4 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.0
 
 import PackageDescription
 
@@ -25,14 +25,6 @@ let package = Package(
         // .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.6.0")
     ],
     targets: [
-        // System library — libmtp C bridge
-        .systemLibrary(
-            name: "CLibMTP",
-            path: "Sources/CLibMTP",
-            pkgConfig: "libmtp",
-            providers: [.brew(["libmtp"])]
-        ),
-
         // C utilities — high-performance file copy, ls parser, Spotlight control
         .target(
             name: "CTransferUtils",
@@ -75,7 +67,6 @@ let package = Package(
             name: "SnapHaul",
             dependencies: [
                 "SnapHaulKit",
-                "CLibMTP",
                 "CTransferUtils",
                 "CMTPCore"
             ],
@@ -91,5 +82,6 @@ let package = Package(
             dependencies: ["SnapHaulKit", "SnapHaul"],
             path: "Tests/UnitTests"
         )
-    ]
+    ],
+    swiftLanguageModes: [.v6]
 )

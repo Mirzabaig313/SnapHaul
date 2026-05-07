@@ -18,8 +18,8 @@ actor ADBEngine: TransferEngine {
         category: "adb"
     )
 
-    private var connected = false
-    private var deviceSerial: String?
+    nonisolated(unsafe) private var connected = false
+    nonisolated(unsafe) private var deviceSerial: String?
 
     private let adbPath: String
 
@@ -263,7 +263,7 @@ actor ADBEngine: TransferEngine {
 
     // MARK: - Helpers
 
-    private func requireSerial() throws -> String {
+    private func requireSerial() throws(ADBError) -> String {
         guard let serial = deviceSerial else {
             throw ADBError.deviceOffline(device: "unknown")
         }
@@ -277,7 +277,8 @@ actor ADBEngine: TransferEngine {
             // but the caller should have called disconnect() for clean logging.
             let serial = deviceSerial ?? "unknown"
             let redacted = serial.count > 4 ? "***\(serial.suffix(4))" : "****"
-            print("[SnapHaul] Warning: ADBEngine deallocated while still connected [\(redacted)]")
+            os_log(.error, log: OSLog(subsystem: "com.snaphaul.app", category: "adb"),
+                   "ADBEngine deallocated while still connected [%{public}@]", redacted)
         }
     }
 
@@ -383,45 +384,51 @@ actor ADBEngine: TransferEngine {
             process.standardOutput = pipe
             process.standardError = errorPipe
 
-            let lock = NSLock()
-            var resumed = false
+            // Use a class-based box to safely share mutable state across
+            // the @Sendable closure boundary. The NSLock serializes access.
+            final class ResumeState: @unchecked Sendable {
+                private let lock = NSLock()
+                private var resumed = false
 
-            func resumeOnce(_ result: Result<String, Error>) {
-                lock.lock()
-                defer { lock.unlock() }
-                guard !resumed else { return }
-                resumed = true
-                switch result {
-                case .success(let output): continuation.resume(returning: output)
-                case .failure(let error):  continuation.resume(throwing: error)
+                func tryResume() -> Bool {
+                    lock.lock()
+                    defer { lock.unlock() }
+                    guard !resumed else { return false }
+                    resumed = true
+                    return true
                 }
             }
+
+            let state = ResumeState()
 
             process.terminationHandler = { proc in
                 let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
                 let output = String(data: outputData, encoding: .utf8) ?? ""
 
+                guard state.tryResume() else { return }
+
                 if proc.terminationStatus != 0 {
                     let stderrData = errorPipe.fileHandleForReading.readDataToEndOfFile()
                     let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-                    resumeOnce(.failure(ADBError.commandFailed(
+                    continuation.resume(throwing: ADBError.commandFailed(
                         command: arguments.joined(separator: " "),
                         exitCode: Int(proc.terminationStatus),
                         stderr: stderr
-                    )))
+                    ))
                 } else {
-                    resumeOnce(.success(output))
+                    continuation.resume(returning: output)
                 }
             }
 
             do {
                 try process.run()
             } catch {
-                resumeOnce(.failure(ADBError.commandFailed(
+                guard state.tryResume() else { return }
+                continuation.resume(throwing: ADBError.commandFailed(
                     command: arguments.joined(separator: " "),
                     exitCode: -1,
                     stderr: error.localizedDescription
-                )))
+                ))
             }
         }
     }

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 SnapHaul Contributors
 // Licensed under GPL-3.0 — see LICENSE
 //
-
+ 
 import Foundation
 import SnapHaulKit
 import os

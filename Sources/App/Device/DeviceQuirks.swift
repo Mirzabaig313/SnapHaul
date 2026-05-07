@@ -79,7 +79,7 @@ enum DeviceQuirks {
         ),
         vendorXiaomi: DeviceProfile(
             vendorName: "Xiaomi",
-            quirks: [.slowEnumeration, .suggestADB, .throttledMTPSpeed,
+            quirks: [.slowEnumeration, .throttledMTPSpeed,
                      .generalErrorOnDuplicateSession, .scopedStorageSlowdown],
             keepAliveInterval: 12,
             connectionTimeout: 10,
@@ -143,7 +143,7 @@ enum DeviceQuirks {
         ),
         vendorHuawei: DeviceProfile(
             vendorName: "Huawei",
-            quirks: [.slowEnumeration, .suggestADB, .scopedStorageSlowdown],
+            quirks: [.slowEnumeration, .scopedStorageSlowdown],
             keepAliveInterval: 12,
             connectionTimeout: 10,
             interOpDelay: 20

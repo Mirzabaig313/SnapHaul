@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import GRDB
+internal import GRDB
 import os
 
 /// Central database manager for SQLite storage.

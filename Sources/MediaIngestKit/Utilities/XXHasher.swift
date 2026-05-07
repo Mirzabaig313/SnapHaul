@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import xxHash_Swift
+internal import xxHash_Swift
 
 /// Fast non-cryptographic file hasher using XXH3-128.
 ///
@@ -30,5 +30,27 @@ public enum XXHasher {
     public static func hash(data: Data) -> String {
         let hash = xxHash64.digest(data)
         return String(format: "%016llx", hash)
+    }
+
+    /// Compute XXH64 hash as a raw UInt64 for direct comparison without string allocation.
+    /// Use this in hot paths where formatting overhead matters (batch verification).
+    public static func hashRaw(data: Data) -> UInt64 {
+        xxHash64.digest(data)
+    }
+
+    /// Compute XXH64 hash of a file as a raw UInt64.
+    /// Avoids hex string allocation — use for batch comparisons.
+    public static func hashFileRaw(at url: URL) throws -> UInt64 {
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        return xxHash64.digest(data)
+    }
+
+    /// Combine two 64-bit hashes into a 128-bit value for stronger collision resistance.
+    /// Useful when comparing large file sets where 64-bit collision probability matters.
+    @available(macOS 15.0, *)
+    public static func hash128(data: Data) -> UInt128 {
+        let h1 = xxHash64.digest(data, seed: 0)
+        let h2 = xxHash64.digest(data, seed: 0x9E37_79B9_7F4A_7C15)
+        return UInt128(_low: h1, _high: h2)
     }
 }

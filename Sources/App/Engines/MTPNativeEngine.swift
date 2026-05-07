@@ -1,4 +1,4 @@
-// SnapHaul
+ // SnapHaul
 // Copyright (c) 2026 SnapHaul Contributors
 // Licensed under GPL-3.0 — see LICENSE
 //
@@ -17,7 +17,9 @@ actor MTPNativeEngine: TransferEngine {
 
     private let logger = Logger(subsystem: "com.snaphaul.app", category: "mtp-native")
 
-    private var session: UnsafeMutablePointer<mtp_session_t>?
+    /// Marked nonisolated(unsafe) to allow cleanup check in deinit — safe because
+    /// deinit only runs when no other references exist.
+    nonisolated(unsafe) private var session: UnsafeMutablePointer<mtp_session_t>?
     private var deviceSerial: String = ""
     private var deviceModel: String = ""
     private var deviceManufacturer: String = ""
@@ -359,7 +361,7 @@ actor MTPNativeEngine: TransferEngine {
         }
 
         // Bypass buffer cache — transfer data is write-once, no need to pollute RAM
-        fcntl(fd, F_NOCACHE, 1)
+        _ = fcntl(fd, F_NOCACHE, 1)
 
         if fileSize >= 1_048_576 {
             var fst = fstore_t()
@@ -589,9 +591,19 @@ actor MTPNativeEngine: TransferEngine {
     /// Image Capture.app uses this daemon to claim the USB interface for photo import.
     /// If it's running when we try to open the MTP session, our claim fails.
     private func releasePTPCamera() async {
+        // Unload the PTPCamera launch agent to prevent respawn, then kill it.
+        // Just killing it isn't enough — launchd respawns it within milliseconds.
+        let unload = Process()
+        unload.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        unload.arguments = ["bootout", "gui/\(getuid())", "/System/Library/LaunchAgents/com.apple.PTPCamera.plist"]
+        unload.standardOutput = FileHandle.nullDevice
+        unload.standardError = FileHandle.nullDevice
+        try? unload.run()
+        unload.waitUntilExit()
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        process.arguments = ["PTPCamera"]
+        process.arguments = ["-9", "PTPCamera"]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
 
@@ -599,22 +611,32 @@ actor MTPNativeEngine: TransferEngine {
             try process.run()
             process.waitUntilExit()
             if process.terminationStatus == 0 {
-                logger.info("Killed PTPCamera daemon (was holding USB interface)")
-                // Give macOS a moment to release the interface
-                try? await Task.sleep(nanoseconds: 500_000_000)
+                logger.info("Killed PTPCamera daemon")
             }
         } catch {
-            // PTPCamera not running — that's fine
+            // Not running — fine
         }
 
-        // Also kill the ApplePhotoMTPClientAgent if present (macOS 14+)
+        // Also handle ApplePhotoMTPClientAgent
+        let unload2 = Process()
+        unload2.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        unload2.arguments = ["bootout", "gui/\(getuid())", "/System/Library/LaunchAgents/com.apple.ApplePhotoMTPClientAgent.plist"]
+        unload2.standardOutput = FileHandle.nullDevice
+        unload2.standardError = FileHandle.nullDevice
+        try? unload2.run()
+        unload2.waitUntilExit()
+
         let agent = Process()
         agent.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        agent.arguments = ["ApplePhotoMTPClientAgent"]
+        agent.arguments = ["-9", "ApplePhotoMTPClientAgent"]
         agent.standardOutput = FileHandle.nullDevice
         agent.standardError = FileHandle.nullDevice
         try? agent.run()
         agent.waitUntilExit()
+
+        // Wait for the kernel driver to release the interface
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        logger.info("PTPCamera launch agent disabled and process killed")
     }
 
     // MARK: - Helpers

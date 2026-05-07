@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import CryptoKit
+internal import CryptoKit
 import SnapHaulKit
 import os
 
@@ -74,7 +74,12 @@ extension XPCService: NSXPCListenerDelegate {
 
 /// Implements `SnapHaulXPCProtocol` on behalf of the host app.
 /// Each method bridges from the XPC call to the async AppState methods.
-final class XPCHandler: NSObject, SnapHaulXPCProtocol {
+///
+/// Marked `@unchecked Sendable` because XPC reply handlers are inherently
+/// cross-isolation — the XPC runtime calls methods from arbitrary threads.
+/// Thread safety is guaranteed by delegating all mutable state access to
+/// `AppState` (which is `@MainActor`) or to actor-isolated engines.
+final class XPCHandler: NSObject, SnapHaulXPCProtocol, @unchecked Sendable {
 
     private let logger = Logger(
         subsystem: "com.snaphaul.app",
@@ -90,6 +95,7 @@ final class XPCHandler: NSObject, SnapHaulXPCProtocol {
     // MARK: - Device Status
 
     func deviceStatus(reply: @escaping (Data?, Error?) -> Void) {
+        nonisolated(unsafe) let reply = reply
         Task { @MainActor in
             guard let state = self.appState?.deviceState else {
                 reply(nil, nil)
@@ -107,6 +113,7 @@ final class XPCHandler: NSObject, SnapHaulXPCProtocol {
     // MARK: - File Operations
 
     func listFiles(at path: String, reply: @escaping (Data?, Error?) -> Void) {
+        nonisolated(unsafe) let reply = reply
         Task {
             do {
                 guard let appState = self.appState else {
@@ -128,6 +135,7 @@ final class XPCHandler: NSObject, SnapHaulXPCProtocol {
         to localPath: String,
         reply: @escaping (UInt64, Error?) -> Void
     ) {
+        nonisolated(unsafe) let reply = reply
         Task {
             do {
                 guard let appState = self.appState else {
@@ -149,6 +157,7 @@ final class XPCHandler: NSObject, SnapHaulXPCProtocol {
         to remotePath: String,
         reply: @escaping (Bool, Error?) -> Void
     ) {
+        nonisolated(unsafe) let reply = reply
         Task {
             do {
                 guard let appState = self.appState else {
@@ -166,6 +175,7 @@ final class XPCHandler: NSObject, SnapHaulXPCProtocol {
     }
 
     func deleteFile(at path: String, reply: @escaping (Bool, Error?) -> Void) {
+        nonisolated(unsafe) let reply = reply
         Task {
             do {
                 guard let appState = self.appState else {
@@ -186,6 +196,7 @@ final class XPCHandler: NSObject, SnapHaulXPCProtocol {
     }
 
     func renameFile(at path: String, to newName: String, reply: @escaping (Bool, Error?) -> Void) {
+        nonisolated(unsafe) let reply = reply
         Task {
             do {
                 guard let appState = self.appState else {
@@ -206,6 +217,7 @@ final class XPCHandler: NSObject, SnapHaulXPCProtocol {
     }
 
     func transferProgress(reply: @escaping (Data?, Error?) -> Void) {
+        nonisolated(unsafe) let reply = reply
         Task { @MainActor in
             guard let progress = self.appState?.transferProgress else {
                 reply(nil, nil)
@@ -223,6 +235,7 @@ final class XPCHandler: NSObject, SnapHaulXPCProtocol {
     // MARK: - Checksum
 
     func checksumLocalFile(at localPath: String, reply: @escaping (String?, Error?) -> Void) {
+        nonisolated(unsafe) let reply = reply
         Task {
             do {
                 let url = URL(fileURLWithPath: localPath)

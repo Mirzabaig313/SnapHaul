@@ -258,51 +258,49 @@ int mtp_usb_transport_open(uint16_t vendor_id, uint16_t product_id,
     mtp_transport_t *t = calloc(1, sizeof(mtp_transport_t));
     if (!t) return -1;
 
-    // Always expose context so caller can retrieve error details
     *out_context = t;
 
-    // Initialize libusb
+    fprintf(stderr, "[USB] Step 1: libusb_init...\n");
     int r = libusb_init(&t->usb_ctx);
     if (r != 0) {
         snprintf(t->last_error, sizeof(t->last_error),
                  "libusb_init failed: %s", libusb_strerror(r));
+        fprintf(stderr, "[USB] FAILED: %s\n", t->last_error);
         return -1;
     }
+    fprintf(stderr, "[USB] Step 1: OK\n");
 
-    // Find and open the device by VID/PID.
-    // On macOS, this can fail if PTPCamera/ApplePhotoMTPClientAgent has the
-    // device exclusively claimed. Retry up to 3 times with increasing delay
-    // to allow the kernel driver to release after killall.
+    fprintf(stderr, "[USB] Step 2: open_device_with_vid_pid(VID=%04x, PID=%04x)...\n", vendor_id, product_id);
     for (int attempt = 0; attempt < 3; attempt++) {
         t->handle = libusb_open_device_with_vid_pid(t->usb_ctx, vendor_id, product_id);
         if (t->handle) break;
-
         if (attempt < 2) {
-            // Wait before retry: 200ms, 500ms
+            fprintf(stderr, "[USB] Step 2: attempt %d failed, retrying...\n", attempt + 1);
             usleep(attempt == 0 ? 200000 : 500000);
         }
     }
 
     if (!t->handle) {
-        // Enumerate all devices to provide diagnostic info
         libusb_device **devs = NULL;
         ssize_t dev_count = libusb_get_device_list(t->usb_ctx, &devs);
+        fprintf(stderr, "[USB] Step 2: FAILED — device not found. %zd USB devices visible.\n", dev_count);
 
         if (dev_count > 0 && devs) {
-            // Try to find the device manually — libusb_open_device_with_vid_pid
-            // only returns the first match and may miss composite devices
             for (ssize_t i = 0; i < dev_count; i++) {
                 struct libusb_device_descriptor desc;
                 if (libusb_get_device_descriptor(devs[i], &desc) != 0) continue;
+                fprintf(stderr, "[USB]   Device %zd: VID=%04x PID=%04x class=%d\n",
+                        i, desc.idVendor, desc.idProduct, desc.bDeviceClass);
 
                 if (desc.idVendor == vendor_id && desc.idProduct == product_id) {
-                    // Found it — try opening directly
+                    fprintf(stderr, "[USB]   ^ MATCH — trying libusb_open directly...\n");
                     r = libusb_open(devs[i], &t->handle);
                     if (r == 0 && t->handle) {
+                        fprintf(stderr, "[USB]   ^ Direct open succeeded!\n");
                         libusb_free_device_list(devs, 1);
                         goto device_opened;
                     }
-                    // Open failed — report the specific error
+                    fprintf(stderr, "[USB]   ^ Direct open FAILED: %s\n", libusb_strerror(r));
                     snprintf(t->last_error, sizeof(t->last_error),
                              "Device found (VID=%04x PID=%04x) but open failed: %s",
                              vendor_id, product_id, libusb_strerror(r));
@@ -314,44 +312,54 @@ int mtp_usb_transport_open(uint16_t vendor_id, uint16_t product_id,
         }
 
         snprintf(t->last_error, sizeof(t->last_error),
-                 "Device not found (VID=%04x PID=%04x) — is it connected, unlocked, "
-                 "and in MTP/File Transfer mode? (%zd USB devices visible)",
+                 "Device not found (VID=%04x PID=%04x) — %zd USB devices visible",
                  vendor_id, product_id, dev_count > 0 ? dev_count : 0);
         return -1;
     }
+    fprintf(stderr, "[USB] Step 2: OK — device handle acquired\n");
 
 device_opened:
 
-    // Detach kernel driver on the MTP interface before claiming.
-    // On macOS, PTPCamera or ApplePhotoMTPClientAgent may hold the interface.
-    // auto_detach handles this transparently for claim_interface.
+    fprintf(stderr, "[USB] Step 3: set_auto_detach_kernel_driver...\n");
     libusb_set_auto_detach_kernel_driver(t->handle, 1);
+    fprintf(stderr, "[USB] Step 3: OK\n");
 
-    // Find MTP interface and bulk/interrupt endpoints
+    fprintf(stderr, "[USB] Step 4: find_mtp_endpoints...\n");
     if (find_mtp_endpoints(t) != 0) {
-        // last_error already set by find_mtp_endpoints
+        fprintf(stderr, "[USB] Step 4: FAILED — %s\n", t->last_error);
+        return -1;
+    }
+    fprintf(stderr, "[USB] Step 4: OK — interface=%d, bulk_in=0x%02x, bulk_out=0x%02x, interrupt=0x%02x\n",
+            t->interface_number, t->ep_bulk_in, t->ep_bulk_out, t->ep_interrupt);
+
+    fprintf(stderr, "[USB] Step 5: checking kernel driver on interface %d...\n", t->interface_number);
+    int kd = libusb_kernel_driver_active(t->handle, t->interface_number);
+    fprintf(stderr, "[USB] Step 5: kernel_driver_active = %d (%s)\n", kd,
+            kd == 1 ? "YES — driver attached" : kd == 0 ? "no driver" : "error/not supported");
+
+    if (kd == 1) {
+        fprintf(stderr, "[USB] Step 5b: detaching kernel driver...\n");
+        int dr = libusb_detach_kernel_driver(t->handle, t->interface_number);
+        fprintf(stderr, "[USB] Step 5b: detach result = %d (%s)\n", dr, libusb_strerror(dr));
+        if (dr == 0) {
+            usleep(200000);
+        }
+    }
+
+    fprintf(stderr, "[USB] Step 6: claim_interface(%d)...\n", t->interface_number);
+    r = libusb_claim_interface(t->handle, t->interface_number);
+    fprintf(stderr, "[USB] Step 6: result = %d (%s)\n", r, libusb_strerror(r));
+
+    if (r != 0) {
+        snprintf(t->last_error, sizeof(t->last_error),
+                 "Failed to claim USB interface %d: %s (is another app using the device?)",
+                 t->interface_number, libusb_strerror(r));
+        fprintf(stderr, "[USB] FAILED: %s\n", t->last_error);
         return -1;
     }
 
-    // Claim the MTP interface
-    r = libusb_claim_interface(t->handle, t->interface_number);
-    if (r != 0) {
-        // If claim fails, try explicit kernel driver detach and retry once
-        if (r == LIBUSB_ERROR_BUSY || r == LIBUSB_ERROR_ACCESS) {
-            libusb_detach_kernel_driver(t->handle, t->interface_number);
-            usleep(100000);  // 100ms for driver to release
-            r = libusb_claim_interface(t->handle, t->interface_number);
-        }
+    fprintf(stderr, "[USB] Step 7: SUCCESS — interface claimed, populating callbacks\n");
 
-        if (r != 0) {
-            snprintf(t->last_error, sizeof(t->last_error),
-                     "Failed to claim USB interface %d: %s (is another app using the device?)",
-                     t->interface_number, libusb_strerror(r));
-            return -1;
-        }
-    }
-
-    // Populate the callback interface for CMTPCore
     out_interface->bulk_write = transport_bulk_write;
     out_interface->bulk_read = transport_bulk_read;
     out_interface->interrupt_read = transport_interrupt_read;

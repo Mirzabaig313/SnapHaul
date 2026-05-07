@@ -3,7 +3,8 @@
 // Licensed under GPL-3.0 — see LICENSE
 //
 
-import Foundation
+@preconcurrency import Foundation
+@preconcurrency import CoreFoundation
 import IOKit.ps
 import os
 
@@ -19,8 +20,8 @@ final class PowerManager: ObservableObject {
         category: "power"
     )
 
-    private var runLoopSource: CFRunLoopSource?
-    private var retainedSelf: Unmanaged<PowerManager>?
+    nonisolated(unsafe) private var runLoopSource: CFRunLoopSource?
+    nonisolated(unsafe) private var retainedSelf: Unmanaged<PowerManager>?
 
     init() {
         updatePowerState()
