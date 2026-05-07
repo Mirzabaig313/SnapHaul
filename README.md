@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="Resources/menubar.png" alt="SnapHaul" width="64">
-</p>
-
 <h1 align="center">SnapHaul</h1>
 
 <p align="center">
