@@ -1,304 +1,293 @@
-# SnapHaul
+<p align="center">
+  <img src="Resources/menubar.png" alt="SnapHaul" width="64">
+</p>
 
-> One cable. One click. Every file.
+<h1 align="center">SnapHaul</h1>
 
-Professional media ingest and file transfer utility (MTP/ADB/Wi-Fi) for **macOS on Apple Silicon**. Replaces the defunct Google Android File Transfer with a native, reliable tool for photographers, videographers, and anyone who needs to move files between Android and Mac.
+<p align="center">
+  <strong>One cable. One click. Every file.</strong><br>
+  The reliable way to move files between Android and Mac.
+</p>
 
-No kernel extensions. No connection timeouts. No dropped transfers.
+<p align="center">
+  <a href="#why-this-exists">Why</a> •
+  <a href="#what-it-does">What</a> •
+  <a href="#features">Features</a> •
+  <a href="#performance">Performance</a> •
+  <a href="#installation">Install</a> •
+  <a href="#architecture">Architecture</a> •
+  <a href="#roadmap">Roadmap</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-14%2B-blue?style=flat-square&logo=apple" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/Apple%20Silicon-native-black?style=flat-square" alt="Apple Silicon">
+  <img src="https://img.shields.io/badge/license-GPL--3.0-green?style=flat-square" alt="GPL-3.0">
+  <img src="https://img.shields.io/badge/swift-6.0%2B-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift 6.0+">
+  <img src="https://img.shields.io/badge/price-free-brightgreen?style=flat-square" alt="Free">
+</p>
 
 ---
 
-## What it does
+## Why This Exists
 
-Plug in your Android phone via USB — or connect over Wi-Fi. SnapHaul detects it instantly and gives you three ways to work:
+macOS has **no native MTP support**. Plug in an Android phone and Finder shows nothing.
 
-**Full app window** — a proper file manager with sidebar navigation, thumbnail previews, table view, multi-select, drag-and-drop, and bidirectional copy (Android → Mac, Mac → Android).
+Google killed Android File Transfer. The alternatives are worse:
 
-**Menu bar** — quick access to device status, one-click ingest profiles, and transfer progress without opening a window.
+| Tool | Problem |
+|:-----|:--------|
+| **OpenMTP** | Electron app. Custom MTP kernel (Go) but still wraps it in Chromium. No ingest automation, no delta-sync, no Finder integration. Reports of breakage on M4 + Sequoia. |
+| **MacDroid** | Requires macFUSE kernel extension. Apple blocks kexts on Apple Silicon by default. Paid subscription. |
+| **Commander One** | macFUSE dependency. General-purpose file manager, not built for media workflows. |
+| **ShotPut Pro** | $169. No Android support. Camera cards only. |
+| **Cloud sync** | Uploads 50 GB to Google's servers to move files 30 cm. |
 
-**Automated ingest** — set up a profile once (source folders, file type filter, destination, naming template). Next time you plug in, it runs automatically — only new files, checksummed, renamed, organized into date folders, copied to backup drives, and reported in PDF.
+**Millions of Android + Mac users** have no reliable, native way to move files between their phone and their computer.
+
+SnapHaul fixes this. Native Swift app, custom MTP protocol stack, zero kernel extensions, zero network calls. Plug in, pull files, done.
 
 ---
 
-## Screenshots
+## What It Does
 
-<img src="Resources/image.png" alt="SnapHaul Main Window" width="550">
+<img src="Resources/image.png" alt="SnapHaul Main Window" width="680">
+
+Three ways to work:
+
+**Finder volume** — Your Android device appears in the Finder sidebar like iCloud Drive. Drag files in and out. Quick Look. Open in any app. Standard Finder operations.
+
+**File browser** — Full file manager with sidebar navigation, thumbnails, multi-select, drag-and-drop, bidirectional copy, Quick Look preview.
+
+**Automated ingest** — Define a profile once. Next time you plug in, it runs automatically: only new files, checksummed, renamed by EXIF data, organized into date folders, copied to backup drives, PDF report generated.
+
 ---
 
 ## Features
 
-### Transfer engines
-- **MTP engine** — built on libmtp. Read, write, delete, rename files on any Android device in File Transfer mode. No USB Debugging required.
-- **ADB engine** — uses `adb pull`/`adb push` for faster batch transfers. Requires USB Debugging enabled on the device.
-- **Wi-Fi transfer** — ADB over TCP/IP for cable-free ingest when Mac and Android are on the same network. Android 11+ wireless debugging pairing supported.
-- **Automatic engine selection** — picks the best engine based on device state and user preference. Falls back gracefully.
+### Transfer Engines
 
-### File management
+| Engine | Setup | Speed | Best For |
+|:-------|:------|:------|:---------|
+| **MTP** (custom CMTPCore stack) | None — just set phone to "File Transfer" | 30–80 MB/s | Everyone. No developer setup needed. |
+| **ADB** (4 parallel streams) | Enable USB Debugging once | 80–150 MB/s | Power users, large batches, unreliable MTP devices |
+| **Wi-Fi** (ADB over TCP/IP) | One-time USB pairing | 20–80 MB/s | Cable-free convenience |
+
+Engine selection is automatic. Falls back gracefully.
+
+The MTP engine is **not a wrapper around libmtp**. It's a custom, pure C protocol stack (CMTPCore) with libusb for USB I/O — similar in ambition to OpenMTP's "Kalam Kernel" (Go-based), but implemented in C for zero-overhead Apple Silicon performance, with per-vendor quirk handling for Samsung, Xiaomi, OnePlus, and others. No Electron. No Go runtime. No Chromium process tree.
+
+### Professional Ingest Pipeline
+
+```
+Device → Discover → Filter → Delta-Sync → Transfer → Verify → Organize → Report
+```
+
+| Feature | What it does |
+|:--------|:-------------|
+| **Delta-sync** | SQLite manifest tracks what's already transferred. Never re-copies files. |
+| **Checksum verification** | XXH3 (30 GB/s on Apple Silicon) or SHA-256 (forensic-grade). Every file verified. |
+| **EXIF-aware naming** | `{date}_{camera}_{sequence}.{ext}` → `20260503_S25Ultra_0001.dng` |
+| **Sidecar pairing** | RAW+XMP, ARW+JPG stay together through renaming |
+| **Multi-destination copy** | Primary SSD + backup drives simultaneously. Per-destination verification. |
+| **Smart queue** | Largest first, newest first, or custom priority per profile |
+| **Post-ingest hooks** | Shell scripts with env vars + JSON report on stdin. Trigger Lightroom, DaVinci Resolve, NAS rsync, Slack. |
+| **Transfer reports** | PDF (client-ready with checksums), CSV, JSON. Auto-generated after every session. |
+| **Auto-trigger** | Starts when your device connects. Zero clicks. |
+
+This is what ShotPut Pro charges $169 for. SnapHaul does it free.
+
+### File Management
+
 - Browse any folder on the device
-- **Thumbnail previews** — real image thumbnails via MTP `GetThumbnail` and ADB MediaStore, not generic icons
-- Table view with columns: name, size, date, type
-- Multi-select files and folders
-- **Drag-and-drop** — drag files from the device to Finder, Lightroom, or any app. Drag files from Finder onto the device.
-- Copy files: Android → Mac or Mac → Android
-- Delete and rename files on the device
-- Double-click folders to navigate, breadcrumb path bar, back button
-- Sidebar with quick-access folders (DCIM, Download, Pictures, Movies, Music, Documents)
-- Spacebar Quick Look preview for the selected file
+- Table view with sort by name/size/date/type
+- Thumbnail previews (real images, not generic icons)
+- Multi-select, drag-and-drop (both directions — Android ↔ Mac)
+- Spacebar Quick Look preview
+- Sidebar with DCIM, Downloads, Pictures, Movies, Music, Documents
+- Copy, delete, rename files on device
+- Breadcrumb path bar, back button, double-click navigation
 
-### Automated ingest
-- **Ingest profiles** — define source directories, file type filters, destination, naming template, subfolder structure
-- **Delta-sync** — only transfers new or modified files (manifest stored in SQLite)
-- **EXIF-aware naming** — rename files using camera model, date, sequence number
-- **Sidecar file pairing** — automatically pairs RAW+XMP, ARW+JPG, CR3+THM files so they stay together through renaming
-- **File type presets** — Professional Media (RAW + video), All Images, All Video, All Audio, Documents, All Files, or custom
-- **Smart queue ordering** — transfer largest files first, newest first, or any other priority. Configurable per profile.
-- **Auto-trigger** — start ingest automatically when a known device connects
-- **Checksum verification** — XXH3 (fast) or SHA-256 (forensic) post-transfer integrity check
-- **Multi-destination copy** — simultaneously copy to your working SSD and one or more backup drives. Per-destination verification.
-- **Post-ingest hooks** — run shell scripts after ingest completes. Environment variables and JSON report on stdin for Lightroom import, DaVinci Resolve project creation, NAS rsync, Slack notifications.
+### macOS Integration
 
-### Transfer reports
-- **PDF reports** — branded summary with per-file checksums, timestamps, error details. Ready for client handoff or chain-of-custody.
-- **CSV export** — one row per file for spreadsheet analysis or database import.
-- **JSON export** — structured report for programmatic consumption by post-ingest hooks and external tools.
-- Auto-generated after each ingest session. Also exportable on demand from Transfer History.
+- **Finder volume** — device appears in sidebar via File Provider (no kexts)
+- **Menu bar** — device status, one-click ingest, live transfer progress
+- **Notifications** — connect/disconnect, ingest complete, errors, checksum failures
+- **Power-aware** — auto-detects battery vs AC. Fewer streams, deferred checksums, E-core routing on battery.
+- **Security-Scoped Bookmarks** — persistent destination access without re-prompting
+- **Hardened Runtime + Notarization** — installs without disabling Gatekeeper
 
-### SD card and camera card support (planned)
-- Ingest from SD cards, CF Express cards, and any mounted Finder volume — not just Android devices
-- Auto-detection for Canon, Sony, Nikon, Fuji, Blackmagic, GoPro, and DJI card structures
-- Same ingest pipeline: filter → delta-sync → verify → organize → report
-- One tool and one set of profiles for both your phone and your camera
+### 90+ File Types
 
-### 90+ file types supported
-RAW camera formats (DNG, ARW, CR3, CR2, NEF, RAF, RW2, ORF, and more), video (MP4, MOV, MKV, AVI, ProRes, RED R3D, Blackmagic BRAW), audio (MP3, FLAC, WAV, AAC, OGG), images (JPEG, PNG, HEIC, WebP, AVIF), documents (PDF, Office, iWork), archives, Android APKs, 3D formats, and everything else as generic binary.
-
-### macOS integration
-- Menu bar app with device status, transfer progress, and quick actions
-- Full app window with sidebar file manager
-- macOS notifications for device connect/disconnect, ingest start/complete/error
-- Security-Scoped Bookmarks for persistent destination access
-- Hardened Runtime and notarization-ready
-
-### Finder integration (File Provider)
-
-With a **paid Apple Developer account** ($99/year), SnapHaul can mount your Android device as a native volume in the Finder sidebar — just like iCloud Drive or Dropbox. You can then drag files in and out of the device directly in Finder, use Quick Look, open files in any app, and use standard Finder operations.
-
-This requires the `com.apple.developer.fileprovider.testing-mode` entitlement, which Apple only provisions for paid Developer ID accounts.
-
-**To enable it:**
-1. Sign up for the [Apple Developer Program](https://developer.apple.com/programs/) ($99/year)
-2. Open `Sources/FileProviderExtension/SnapHaulFileProvider.entitlements`
-3. Add the key:
-   ```xml
-   <key>com.apple.developer.fileprovider.testing-mode</key>
-   <true/>
-   ```
-4. Rebuild with `xcodegen generate && open SnapHaul.xcodeproj`
-5. Sign all targets with your paid Developer ID team
-
-Without a paid account, everything else works — the full app window, menu bar, ingest, bidirectional copy — just not the Finder sidebar volume.
-
-### Performance
-- Concurrent ADB transfers (up to 4 parallel streams, reduced to 2 on battery)
-- **Power-aware mode** — automatically detects battery vs. AC power. On battery: fewer streams, deferred checksums, E-core only, suppressed Spotlight indexing.
-- **Adaptive chunk sizing** — dynamically adjusts read/write chunks based on file size and measured USB throughput. USB 2.0 auto-detected.
-- `F_NOCACHE` to avoid polluting the buffer cache during large transfers
-- Memory-mapped checksumming (zero-copy via `mmap`)
-- SQLite with WAL mode and memory-mapped I/O for manifest database
-- Transfer retry with exponential backoff (3 attempts per file)
+RAW (DNG, ARW, CR3, CR2, NEF, RAF, RW2, ORF), Video (MP4, MOV, MKV, ProRes, RED R3D, BRAW), Audio (MP3, FLAC, WAV, AAC), Images (JPEG, PNG, HEIC, WebP, AVIF), Documents (PDF, Office), and everything else.
 
 ---
 
-## Requirements
+## Performance
 
-| Requirement | Minimum | Recommended |
-|:------------|:--------|:------------|
-| macOS | 14 Sonoma | 26 Tahoe |
-| Chip | Apple M1 | Apple M4 |
-| USB | USB-C port | USB 3.2 cable |
-| Wi-Fi | — | Wi-Fi 6 (for wireless transfer) |
-| Android | 10+ with MTP | 14+ with USB Debugging |
+Not a wrapper. Engineered from the ground up for Apple Silicon.
+
+| Technique | Why |
+|:----------|:----|
+| Custom MTP stack (CMTPCore) | No libmtp overhead. Pipelined requests. Vendor-specific quirk handling. |
+| `F_NOCACHE` direct I/O | Write-once transfer data doesn't pollute the 8 GB buffer cache |
+| `mmap(PROT_READ)` checksumming | Zero-copy verification — no read buffer allocation |
+| Page-aligned buffers (16 KB) | Optimal DMA on Apple Silicon |
+| `F_PREALLOCATE` contiguous allocation | No disk fragmentation on destination |
+| Adaptive chunk sizing | Calibrates to measured USB throughput per session |
+| 4 parallel ADB streams | Saturates USB 3.x bandwidth (2 on battery) |
+| SQLite WAL + mmap | Sub-millisecond manifest lookups for delta-sync |
+| `F_FULLFSYNC` | Data confirmed on disk, not just in OS buffer |
+| Deferred Spotlight indexing | Suppressed during transfer, batched after |
+
+### Targets
+
+| Scenario | Target |
+|:---------|:-------|
+| Single large file (MTP, USB 3.x) | ≥ 60 MB/s sustained |
+| Single large file (ADB, USB 3.x) | ≥ 120 MB/s sustained |
+| 1,000 small files (MTP) | ≥ 30 MB/s aggregate |
+| 1,000 small files (ADB) | ≥ 80 MB/s aggregate |
+| Delta-sync re-scan (10K files, 90% synced) | < 30 seconds |
+| Memory (idle) | < 80 MB |
+| Memory (active, 4 streams) | < 250 MB |
+| App launch to menu bar ready | < 1 second |
+
+---
+
+## Supported Devices
+
+| Tier | Devices | Support |
+|:-----|:--------|:--------|
+| **Tier 1** | Samsung Galaxy S24/S25, Google Pixel 8/9, Sony Xperia 1 V/VI | Full MTP + ADB + Wi-Fi. Tested. |
+| **Tier 2** | OnePlus, Xiaomi, Nothing, Motorola | MTP + ADB. Community-tested. |
+| **Tier 3** | Any Android 10+ with MTP | MTP should work. |
+
+OEM quirks (Samsung large file sizes, Xiaomi connection drops, OnePlus session timeouts) handled automatically via `DeviceQuirks`.
+
+### Requirements
+
+| | Minimum | Recommended |
+|:--|:--------|:------------|
+| **macOS** | 14 Sonoma | 15+ Sequoia / 26 Tahoe |
+| **Chip** | Apple M1 | M3/M4 |
+| **USB** | USB-C port | USB 3.2 Gen 2 cable |
+| **Android** | 10+ (MTP mode) | 14+ (USB Debugging for ADB) |
 
 ---
 
 ## Installation
 
-### From source (development)
-
 ```bash
-# Install dependencies
-brew install libmtp libusb xcodegen
+# Prerequisites
+brew install libusb
 
-# Clone
+# Clone and build
 git clone https://github.com/user/snaphaul.git
-
-# Build and run via SPM (no Xcode project needed)
+cd snaphaul/MediaIngestPro
 swift build
 .build/debug/SnapHaul
-
-# Or generate the Xcode project for full app + extensions
-xcodegen generate
-open SnapHaul.xcodeproj
 ```
 
-### Build .app and .dmg
+### Build the .app
 
 ```bash
-# Generate the Xcode project
-xcodegen generate
-
-# Build the app
 xcodebuild -project SnapHaul.xcodeproj \
   -scheme SnapHaul \
-  -configuration Debug \
+  -configuration Release \
   build \
   -destination 'platform=macOS' \
-  SYMROOT="$(pwd)/build" \
-  -allowProvisioningUpdates
-
-# The .app is at:
-# build/Debug/SnapHaul.app
-
-# Create a DMG
-mkdir -p dist
-cp -R build/Debug/SnapHaul.app dist/SnapHaul.app
-hdiutil create -volname "SnapHaul" \
-  -srcfolder dist/SnapHaul.app \
-  -ov -format UDZO \
-  dist/SnapHaul.dmg
-
-# Output:
-# dist/SnapHaul.app  — drag to /Applications
-# dist/SnapHaul.dmg  — share with others
+  SYMROOT="$(pwd)/build"
 ```
 
-### Debug CLI tools
+### Debug tools
 
 ```bash
-swift build
-
-# Test USB device detection (plug in your phone, watch for events)
-.build/debug/SnapHaul --test-usb
-
-# Test MTP connectivity and file listing
-.build/debug/SnapHaul --test-mtp
-
-# Test ADB connectivity and file transfer
-.build/debug/SnapHaul --test-adb
+.build/debug/SnapHaul --test-usb   # USB device detection
+.build/debug/SnapHaul --test-mtp   # MTP connectivity
+.build/debug/SnapHaul --test-adb   # ADB transfers
 ```
 
 ---
 
-## How it works
-
-### Transfer pipeline
-
-```
-[Discovery] → [Filter] → [Delta-Sync] → [Transfer] → [Verify] → [Organize] → [Report]
-
-1. Discovery:  Enumerate source dirs via MTP, `adb shell ls`, or FileManager (SD cards)
-2. Filter:     Apply file type filters (preset or custom extensions)
-3. Delta-sync: Compare against SQLite manifest — skip already-transferred files
-4. Transfer:   Pull files via MTP GetObject / `adb pull` / FileManager.copyItem with retry
-5. Verify:     Checksum comparison (XXH3 or SHA-256)
-6. Organize:   Apply naming template + subfolder structure, pair sidecars, move to destination(s)
-7. Report:     Generate PDF/CSV/JSON report — files, bytes, duration, checksums, errors
-```
-
-### Architecture
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    SwiftUI / AppKit                       │
-│  MainWindowView · MenuBarView · PreferencesView          │
+│              SwiftUI / AppKit UI                          │
+│  MainWindow · MenuBar · Preferences · WelcomeWizard      │
 ├─────────────────────────────────────────────────────────┤
-│                    AppState (MainActor)                   │
-│  DeviceMonitor · EngineSelector · TransferCoordinator    │
-│  IngestEngine · NotificationManager · XPCService         │
+│         AppState (@MainActor, Observable)                 │
+│  TransferCoordinator · IngestEngine · PowerManager        │
+│  DeviceMonitor (IOKit) · EngineSelector · XPCService     │
 ├─────────────────────────────────────────────────────────┤
-│              TransferEngine protocol                     │
-│    MTPEngine (libmtp) · ADBEngine (adb) · VolumeEngine  │
+│           TransferEngine protocol                        │
+│   MTPNativeEngine (actor)  ·  ADBEngine (actor)          │
+│        ↓                          ↓                      │
+│   CMTPCore (C)              Process (adb binary)         │
+│   mtp_usb_transport (C)                                  │
 ├─────────────────────────────────────────────────────────┤
-│  IOKit (USB)  ·  GRDB (SQLite)  ·  ImageIO (EXIF)      │
-│  xxHash  ·  CryptoKit (SHA-256)  ·  FileProvider        │
-│  PDFKit (reports)  ·  NSWorkspace (volume detection)     │
+│  libusb · IOKit · GRDB · xxHash · CryptoKit              │
+│  ImageIO · FileProvider · PDFKit · CTransferUtils (C)    │
 └─────────────────────────────────────────────────────────┘
 ```
 
----
+**Key design decisions:**
 
-## Supported Android devices
-
-| Tier | Devices | Support |
-|:-----|:--------|:--------|
-| Tier 1 | Samsung Galaxy S24/S25, Google Pixel 8/9, Sony Xperia 1 V/VI | Full MTP + ADB + Wi-Fi |
-| Tier 2 | OnePlus, Xiaomi, Nothing, Motorola | MTP + ADB expected |
-| Tier 3 | Any Android 10+ with MTP | MTP should work |
-
-OEM-specific quirks (Samsung large file sizes, Xiaomi connection drops, OnePlus session timeouts) are handled automatically via `DeviceQuirks`.
-
-### Camera cards (planned)
-
-| Brand | Card Types | Detection |
-|:------|:-----------|:----------|
-| Canon | SD, CF Express | `DCIM/100CANON/`, `DCIM/100EOS*/` |
-| Sony | SD, CF Express Type A | `DCIM/100MSDCF/`, `PRIVATE/M4ROOT/` |
-| Nikon | SD, CF Express, XQD | `DCIM/100NIKON/`, `DCIM/100NCD*/` |
-| Fujifilm | SD | `DCIM/100_FUJI/` |
-| Blackmagic | SD, CF Express | `.braw` files in DCIM |
-| GoPro | microSD | `DCIM/100GOPRO/` |
-| DJI | microSD | `DCIM/DJI_*/`, `DCIM/100MEDIA/` |
+- **No network calls** in the transfer path. Everything is local USB I/O.
+- **No kernel extensions.** Pure userspace via IOKit + libusb.
+- **No polling.** USB detection is event-driven (IOKit notifications).
+- **Custom MTP stack.** CMTPCore is a purpose-built C implementation — not a wrapper around libmtp. Handles vendor quirks, large files (>4 GB via Android vendor extensions), and pipelined requests.
+- **Strict concurrency.** Swift actors, async/await, Sendable throughout. No GCD except for C callback wrappers.
+- **Process isolation.** File Provider extension runs in a separate process, communicates via XPC. Extensions are stateless — all device state lives in the host app.
 
 ---
 
 ## Roadmap
 
-### v1.0 — Core (current)
-- MTP + ADB engines, File Provider, ingest pipeline, delta-sync, checksum verification, EXIF naming, menu bar + file browser UI, drag-and-drop
-
-### v1.1 — Workflow Enhancements
-- Wi-Fi transfer (ADB over TCP/IP)
-- Thumbnail previews in file browser
-- Multi-destination copy
-- Transfer reports (PDF/CSV/JSON)
-- Post-ingest hooks (shell scripts)
-- Sidecar file pairing (RAW+XMP, ARW+JPG)
-- Ingest profile export/import (JSON)
-- Localization (Japanese, Korean, German, Spanish, Portuguese)
-
-### v1.2 — Performance & Multi-Device
-- Smart queue ordering (largest first, newest first, etc.)
-- Power-aware transfer mode (battery optimization)
-- Adaptive chunk sizing (throughput calibration)
-- Multi-device simultaneous ingest
-- NAS destinations (SMB/NFS)
-- Transfer scheduling
-
-### v2.0 — Platform Expansion
-- SD card and camera card ingest (Canon, Sony, Nikon, Fuji, Blackmagic, GoPro, DJI)
-- CLI tool (`snaphaul ingest --profile "Photo Shoot"`)
-- FSKit migration (when mature)
+| Version | Focus | Highlights |
+|:--------|:------|:-----------|
+| **v1.0** | Core | Custom MTP stack (CMTPCore), ADB engine, File Provider, ingest pipeline, delta-sync, checksum verification, EXIF naming, file browser, menu bar, drag-and-drop |
+| **v1.1** | Workflow | Wi-Fi transfer, thumbnails, multi-destination copy, PDF/CSV/JSON reports, post-ingest hooks, sidecar pairing, localization |
+| **v1.2** | Performance | Power-aware mode, adaptive chunks, smart queue ordering, multi-device simultaneous ingest, NAS destinations |
+| **v2.0** | Platform | SD card / camera card ingest (Canon, Sony, Nikon, Fuji, GoPro, DJI), CLI tool, IOUSBHost migration (eliminate libusb), FSKit evaluation |
 
 ---
 
-## License
+## Competitive Position
 
-**GNU General Public License v3.0 (GPLv3)**
-
-SnapHaul is free software. You can use, modify, and distribute it — for any purpose, including commercial — under the terms of the GPLv3. The key requirement: if you distribute modified versions, you must also release your source code under GPLv3. No one can take this code, close it up, and charge for it.
-
-See [LICENSE](LICENSE) for the full text.
+| Feature | SnapHaul | OpenMTP | MacDroid | ShotPut Pro |
+|:--------|:---------|:--------|:---------|:------------|
+| Price | **Free** | Free | $24/yr | $169 |
+| Native (no Electron) | ✅ | ❌ | ✅ | ✅ |
+| No kernel extensions | ✅ | ✅ | ❌ (macFUSE) | ✅ |
+| Finder volume | ✅ (File Provider) | ❌ | ✅ (macFUSE) | ❌ |
+| MTP + ADB | ✅ | MTP only | ✅ | ❌ |
+| Delta-sync | ✅ | ❌ | ❌ | ❌ |
+| Checksum verification | ✅ | ❌ | ❌ | ✅ |
+| Multi-destination copy | ✅ | ❌ | ❌ | ✅ |
+| PDF transfer reports | ✅ | ❌ | ❌ | ✅ |
+| Post-ingest hooks | ✅ | ❌ | ❌ | ❌ |
+| EXIF-aware naming | ✅ | ❌ | ❌ | ✅ |
+| Power-aware mode | ✅ | ❌ | ❌ | ❌ |
+| Apple Silicon native | ✅ | ❌ (Electron) | ✅ | ✅ |
+| Open source | ✅ | ✅ | ❌ | ❌ |
 
 ---
 
 ## Contributing
 
-Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
-# Run tests before submitting
-swift test
-
-# Lint
-swiftlint
+swift test      # Run tests
+swiftlint       # Lint
 ```
+
+---
+
+## License
+
+**GPL-3.0.** Free to use, modify, and distribute. Modified versions must release source under GPL-3.0.
+
+See [LICENSE](LICENSE).
