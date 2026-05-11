@@ -50,4 +50,32 @@ const char *mtp_usb_transport_error(void *context);
 /// @return 0 on success, -1 on error
 int mtp_usb_transport_reset(void *context);
 
+/// Get the detected USB speed.
+/// @param context Opaque transport context
+/// @return 1 if USB 3.x (SuperSpeed), 0 if USB 2.0 or unknown
+int mtp_usb_transport_is_usb3(void *context);
+
+/// Get the bulk-in endpoint max packet size.
+/// Useful for aligning transfer sizes to packet boundaries.
+/// @param context Opaque transport context
+/// @return Max packet size in bytes (512 for USB 2.0, 1024 for USB 3.x)
+int mtp_usb_transport_max_packet_size(void *context);
+
+/// Submit an async double-buffered read.
+/// Used by the streaming file transfer path to overlap USB I/O with disk writes.
+/// @param context Opaque transport context
+/// @param buf_idx Buffer index (0 or 1)
+/// @param length Requested read length
+/// @return 0 on success, -1 on error
+int mtp_usb_transport_submit_async(void *context, int buf_idx, size_t length);
+
+/// Wait for an async read to complete and get the data pointer.
+/// @param context Opaque transport context
+/// @param buf_idx Buffer index (0 or 1)
+/// @param out_data Output: pointer to the received data (valid until next submit on same buf_idx)
+/// @param out_length Output: actual bytes received
+/// @return 0 on success, -1 on error
+int mtp_usb_transport_wait_async(void *context, int buf_idx,
+                                 const void **out_data, size_t *out_length);
+
 #endif // MTP_USB_TRANSPORT_H

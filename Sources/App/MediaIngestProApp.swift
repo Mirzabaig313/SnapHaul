@@ -6,6 +6,7 @@
 import SwiftUI
 import FileProvider
 import SnapHaulKit
+import CLibMTP
 
 /// Main entry point for SnapHaul.
 ///
@@ -17,6 +18,8 @@ struct SnapHaulApp: App {
     @State private var showWelcome = !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
 
     init() {
+        LIBMTP_Init()
+
         registerFileProviderDomain()
 
         #if DEBUG

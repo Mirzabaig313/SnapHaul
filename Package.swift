@@ -25,6 +25,14 @@ let package = Package(
         // .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.6.0")
     ],
     targets: [
+        // System library — libmtp (LIBMTP_Init() required for macOS USB authorization)
+        .systemLibrary(
+            name: "CLibMTP",
+            path: "Sources/CLibMTP",
+            pkgConfig: "libmtp",
+            providers: [.brew(["libmtp"])]
+        ),
+
         // C utilities — high-performance file copy, ls parser, Spotlight control
         .target(
             name: "CTransferUtils",
@@ -67,6 +75,7 @@ let package = Package(
             name: "SnapHaul",
             dependencies: [
                 "SnapHaulKit",
+                "CLibMTP",
                 "CTransferUtils",
                 "CMTPCore"
             ],

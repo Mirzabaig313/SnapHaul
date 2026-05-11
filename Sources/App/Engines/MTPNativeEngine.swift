@@ -25,6 +25,18 @@ actor MTPNativeEngine: TransferEngine {
     private var deviceManufacturer: String = ""
     private var primaryStorageID: UInt32 = 0
 
+    /// All discovered storage IDs (internal + SD card).
+    private var storageIDs: [UInt32] = []
+
+    /// Storage metadata for UI display.
+    struct StorageEntry: Sendable {
+        let id: UInt32
+        let name: String
+        let totalBytes: UInt64
+        let freeBytes: UInt64
+    }
+    private(set) var storages: [StorageEntry] = []
+
     private var transportContext: UnsafeMutableRawPointer?
     private var vendorID: UInt16 = 0
 
@@ -46,49 +58,42 @@ actor MTPNativeEngine: TransferEngine {
 
     var isConnected: Bool { session != nil && session!.pointee.is_open != 0 }
 
+    /// IOUSBHost transport instance — used when io_service_t is available.
+    /// Retained for the lifetime of the connection to keep pipes alive.
+    private var ioUSBHostTransport: IOUSBHostTransport?
+
     // MARK: - Connection
 
     func connect(device: USBDevice) async throws {
         logger.info("Connecting via native MTP to \(device.displayName)")
 
-        // Kill macOS PTPCamera daemon that auto-claims Android MTP/PTP interfaces.
-        // Without this, OpenSession fails ~30% of the time on first connection because
-        // Image Capture.app's background agent holds the USB interface.
-        // Note: libusb's auto_detach_kernel_driver handles most cases, but killing
-        // PTPCamera proactively avoids a race condition on first connect.
-        await releasePTPCamera()
-
-        // Open USB transport via libusb — handles device discovery, interface
-        // claiming, and endpoint detection in a single C call.
         var usbInterface = mtp_usb_interface_t()
-        var transportCtx: UnsafeMutableRawPointer?
 
-        logger.info("Opening USB transport for VID=\(String(format: "%04x", device.vendorID)) PID=\(String(format: "%04x", device.productID))")
+        // Strategy: IOUSBHost transport requires com.apple.vm.device-access entitlement
+        // (paid Apple Developer account + Apple approval). Disabled until entitlement is granted.
+        // When ready, set useIOUSBHost = true to enable the native path.
+        let useIOUSBHost = false
 
-        let usbResult = mtp_usb_transport_open(
-            device.vendorID,
-            device.productID,
-            &usbInterface,
-            &transportCtx
-        )
-
-        guard usbResult == 0, let ctx = transportCtx else {
-            let errMsg: String
-            if let transportCtx {
-                errMsg = String(cString: mtp_usb_transport_error(transportCtx))
-                mtp_usb_transport_close(transportCtx)
-            } else {
-                errMsg = "USB transport allocation failed"
+        if useIOUSBHost && device.ioService != 0 {
+            do {
+                try await connectViaIOUSBHost(device: device, usbInterface: &usbInterface)
+                logger.info("Connected via IOUSBHost transport (native)")
+            } catch {
+                logger.warning("IOUSBHost transport failed: \(error.localizedDescription, privacy: .public) — falling back to libusb")
+                // Release the IOUSBHost transport if partially initialized
+                ioUSBHostTransport?.close()
+                ioUSBHostTransport = nil
+                // Fall through to libusb path
+                try await connectViaLibUSB(device: device, usbInterface: &usbInterface)
             }
-            logger.error("USB transport open failed: \(errMsg, privacy: .public)")
-            throw MTPError.connectionFailed(device: device.displayName, reason: errMsg)
+        } else {
+            // libusb path (default until entitlement is available)
+            try await connectViaLibUSB(device: device, usbInterface: &usbInterface)
         }
-        self.transportContext = ctx
 
         // Create MTP session using the USB callbacks provided by the transport
         guard let mtpSession = mtp_session_create(4 * 1024 * 1024, usbInterface) else {
-            mtp_usb_transport_close(ctx)
-            self.transportContext = nil
+            closeTransport()
             throw MTPError.connectionFailed(device: device.displayName, reason: "Failed to allocate MTP session")
         }
         self.session = mtpSession
@@ -97,21 +102,44 @@ actor MTPNativeEngine: TransferEngine {
             let error = safeString(from: mtpSession.pointee.last_error)
             mtp_session_destroy(mtpSession)
             self.session = nil
-            mtp_usb_transport_close(ctx)
-            self.transportContext = nil
+            closeTransport()
             throw MTPError.connectionFailed(device: device.displayName, reason: error)
         }
 
-        // Discover storage
+        if mtp_get_device_info_parsed(mtpSession) == 0 {
+            let opCount = Int(mtpSession.pointee.supported_ops_count)
+            logger.info("Device advertises \(opCount) supported MTP operations")
+        } else {
+            logger.warning("GetDeviceInfo parse failed: \(self.safeString(from: mtpSession.pointee.last_error), privacy: .public)")
+        }
+
+        // Discover all storages (internal + SD card)
         let storageCount = mtp_get_storage_ids(mtpSession)
         if storageCount > 0 {
-            primaryStorageID = mtpSession.pointee.storage_ids.0
-            var storageInfo = mtp_storage_info_t()
-            if mtp_get_storage_info(mtpSession, primaryStorageID, &storageInfo) == 0 {
-                let desc = safeString(from: storageInfo.description)
-                let freeGB = storageInfo.free_space / 1_073_741_824
-                logger.info("Storage: \(desc) (\(freeGB) GB free)")
+            storageIDs = []
+            storages = []
+
+            for i in 0..<Int(storageCount) {
+                let sid = withUnsafeBytes(of: mtpSession.pointee.storage_ids) { buf in
+                    buf.load(fromByteOffset: i * MemoryLayout<UInt32>.size, as: UInt32.self)
+                }
+                storageIDs.append(sid)
+
+                var storageInfo = mtp_storage_info_t()
+                if mtp_get_storage_info(mtpSession, sid, &storageInfo) == 0 {
+                    let desc = safeString(from: storageInfo.description)
+                    storages.append(StorageEntry(
+                        id: sid,
+                        name: desc.isEmpty ? "Storage \(i + 1)" : desc,
+                        totalBytes: storageInfo.max_capacity,
+                        freeBytes: storageInfo.free_space
+                    ))
+                    let freeGB = storageInfo.free_space / 1_073_741_824
+                    logger.info("Storage \(i): \(desc) (\(freeGB) GB free)")
+                }
             }
+
+            primaryStorageID = storageIDs.first ?? 0
         }
 
         self.deviceSerial = device.serialNumber
@@ -133,24 +161,78 @@ actor MTPNativeEngine: TransferEngine {
         logger.info("Native MTP session established with \(device.displayName)")
     }
 
+    // MARK: - IOUSBHost Transport Path
+
+    /// Connect using Apple's native IOUSBHost framework with device capture.
+    /// This forcefully detaches PTPCamera and other macOS drivers — no need to kill processes.
+    private func connectViaIOUSBHost(device: USBDevice, usbInterface: inout mtp_usb_interface_t) async throws {
+        logger.info("Attempting IOUSBHost transport for VID=\(String(format: "%04x", device.vendorID)) PID=\(String(format: "%04x", device.productID))")
+
+        let transport = IOUSBHostTransport()
+        try transport.open(ioService: io_service_t(device.ioService))
+        self.ioUSBHostTransport = transport
+
+        usbInterface = transport.makeUSBInterface()
+    }
+
+    // MARK: - libusb Transport Path (Fallback)
+
+    /// Connect using libusb — the legacy path. Requires killing PTPCamera first.
+    private func connectViaLibUSB(device: USBDevice, usbInterface: inout mtp_usb_interface_t) async throws {
+        // Kill macOS PTPCamera daemon that auto-claims Android MTP/PTP interfaces.
+        // Without this, OpenSession fails ~30% of the time on first connection because
+        // Image Capture.app's background agent holds the USB interface.
+        await releasePTPCamera()
+
+        var transportCtx: UnsafeMutableRawPointer?
+
+        logger.info("Opening libusb transport for VID=\(String(format: "%04x", device.vendorID)) PID=\(String(format: "%04x", device.productID))")
+
+        let usbResult = mtp_usb_transport_open(
+            device.vendorID,
+            device.productID,
+            &usbInterface,
+            &transportCtx
+        )
+
+        guard usbResult == 0, let ctx = transportCtx else {
+            let errMsg: String
+            if let transportCtx {
+                errMsg = String(cString: mtp_usb_transport_error(transportCtx))
+                mtp_usb_transport_close(transportCtx)
+            } else {
+                errMsg = "USB transport allocation failed"
+            }
+            logger.error("libusb transport open failed: \(errMsg, privacy: .public)")
+            throw MTPError.connectionFailed(device: device.displayName, reason: errMsg)
+        }
+        self.transportContext = ctx
+    }
+
+    /// Close whichever transport is active (IOUSBHost or libusb).
+    private func closeTransport() {
+        if let transport = ioUSBHostTransport {
+            transport.close()
+            ioUSBHostTransport = nil
+        }
+        if let ctx = transportContext {
+            mtp_usb_transport_close(ctx)
+            transportContext = nil
+        }
+    }
+
     func disconnect() async {
         logger.info("Disconnecting native MTP session")
         stopKeepAlive()
 
         if let s = session {
-            // Send CloseSession command gracefully before destroying buffers.
-            // If the device was physically disconnected, this may timeout (10s)
-            // inside bulk_write — acceptable since we're tearing down anyway.
             _ = mtp_close_session(s)
             mtp_session_destroy(s)
         }
         session = nil
         handleCache.removeAll()
 
-        if let ctx = transportContext {
-            mtp_usb_transport_close(ctx)
-            transportContext = nil
-        }
+        closeTransport()
     }
 
     // MARK: - Keep-Alive
@@ -183,7 +265,6 @@ actor MTPNativeEngine: TransferEngine {
 
         let parentHandle = try resolvePathToHandle(path)
 
-        // Get all object handles in this directory
         var handles = [UInt32](repeating: 0, count: 10000)
         let count = mtp_get_object_handles(
             s, primaryStorageID, parentHandle, 0,
@@ -192,7 +273,6 @@ actor MTPNativeEngine: TransferEngine {
         guard count >= 0 else { throw MTPError.fileNotFound(path: path) }
         if count == 0 { return [] }
 
-        // Batch get object info (tight C loop — minimizes Swift/C boundary crossings)
         var infos = [mtp_object_info_t](repeating: mtp_object_info_t(), count: Int(count))
         let infoCount: Int32
 
@@ -203,7 +283,6 @@ actor MTPNativeEngine: TransferEngine {
             for i in 0..<Int(count) {
                 if mtp_get_object_info(s, handles[i], &infos[i]) == 0 { success += 1 }
                 if i % 50 == 49 {
-                    // Yield the actor so disconnect/keep-alive can be processed
                     try? await Task.sleep(nanoseconds: UInt64(deviceProfile.interOpDelay) * 1_000_000)
                 }
             }
@@ -223,7 +302,6 @@ actor MTPNativeEngine: TransferEngine {
             let isDir = info.object_format == MTP_FORMAT_ASSOCIATION || info.association_type != 0
             let fullPath = path == "/" ? "/\(name)" : "\(path)/\(name)"
 
-            // Cache the handle for this path
             handleCache[fullPath] = info.object_handle
 
             let modDate = parseMTPDate(info.date_modified) ?? Date()
@@ -360,7 +438,6 @@ actor MTPNativeEngine: TransferEngine {
             throw MTPError.transferFailed(file: remotePath, reason: "Could not create destination file")
         }
 
-        // Bypass buffer cache — transfer data is write-once, no need to pollute RAM
         _ = fcntl(fd, F_NOCACHE, 1)
 
         if fileSize >= 1_048_576 {
@@ -376,7 +453,6 @@ actor MTPNativeEngine: TransferEngine {
 
         var bytesWritten: UInt64 = 0
 
-        // Transfer via CMTPCore hot path (synchronous — pointer to closure is valid)
         let result: Int32
         if let progress {
             var progressClosure = progress
@@ -402,6 +478,14 @@ actor MTPNativeEngine: TransferEngine {
             throw MTPError.transferFailed(file: remotePath, reason: lastError())
         }
 
+        // Restore original modification date from device metadata
+        let modDate = parseMTPDate(info.date_modified)
+        if let date = modDate {
+            try? FileManager.default.setAttributes(
+                [.modificationDate: date], ofItemAtPath: localURL.path
+            )
+        }
+
         return bytesWritten
     }
 
@@ -413,9 +497,32 @@ actor MTPNativeEngine: TransferEngine {
             throw MTPError.transferFailed(file: path, reason: "Invalid path")
         }
 
-        let fileName = components.last!
+        let rawFileName = components.last!
+
+        if FileNameUtils.shouldSkip(rawFileName) {
+            logger.debug("Skipping system file: \(rawFileName, privacy: .public)")
+            return
+        }
+
+        let fileName = FileNameUtils.sanitizeForMTP(rawFileName)
+
         let parentPath = components.count > 1 ? "/" + components.dropLast().joined(separator: "/") : "/"
-        let parentHandle = try resolvePathToHandle(parentPath)
+
+        let parentHandle: UInt32
+        do {
+            parentHandle = try resolvePathToHandle(parentPath)
+        } catch {
+            // Parent directory doesn't exist — create it recursively
+            parentHandle = try createDirectoryRecursive(at: parentPath)
+        }
+
+        // Delete existing file if present — MTP has no in-place overwrite
+        let targetPath = parentPath == "/" ? "/\(fileName)" : "\(parentPath)/\(fileName)"
+        if let existingHandle = handleCache[targetPath] {
+            _ = mtp_delete_object(s, existingHandle)
+            handleCache.removeValue(forKey: targetPath)
+            logger.debug("Deleted existing file before overwrite: \(fileName, privacy: .public)")
+        }
 
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("snaphaul-mtp-send-\(UUID().uuidString)")
@@ -428,19 +535,178 @@ actor MTPNativeEngine: TransferEngine {
         }
         defer { close(srcFD) }
 
-        var newHandle: UInt32 = 0
-        let format = mtpFormatFromExtension(fileName)
-        let result = mtp_send_object_from_fd(
-            s, parentHandle, primaryStorageID,
-            fileName, UInt64(data.count), format, srcFD, &newHandle
+        _ = try sendObjectFromFD(
+            srcFD: srcFD,
+            fileSize: UInt64(data.count),
+            fileName: fileName,
+            parentHandle: parentHandle,
+            targetPath: path,
+            progress: nil
         )
+    }
 
-        guard result == 0 else {
-            throw MTPError.transferFailed(file: path, reason: lastError())
+    func writeFile(
+        at remotePath: String,
+        from localURL: URL,
+        progress: (@Sendable (UInt64) -> Void)?
+    ) async throws -> UInt64 {
+        guard session != nil else { throw MTPError.deviceNotFound }
+
+        let components = remotePath.split(separator: "/").map(String.init).filter { !$0.isEmpty }
+        guard !components.isEmpty else {
+            throw MTPError.transferFailed(file: remotePath, reason: "Invalid path")
         }
 
-        // Cache the new handle
-        handleCache[path] = newHandle
+        let rawFileName = components.last!
+        if FileNameUtils.shouldSkip(rawFileName) {
+            logger.debug("Skipping system file: \(rawFileName, privacy: .public)")
+            return 0
+        }
+        let fileName = FileNameUtils.sanitizeForMTP(rawFileName)
+        let parentPath = components.count > 1
+            ? "/" + components.dropLast().joined(separator: "/")
+            : "/"
+
+        let parentHandle: UInt32
+        do {
+            parentHandle = try resolvePathToHandle(parentPath)
+        } catch {
+            parentHandle = try createDirectoryRecursive(at: parentPath)
+        }
+
+        let targetPath = parentPath == "/" ? "/\(fileName)" : "\(parentPath)/\(fileName)"
+        if let existingHandle = handleCache[targetPath] {
+            _ = mtp_delete_object(session, existingHandle)
+            handleCache.removeValue(forKey: targetPath)
+            logger.debug("Deleted existing file before overwrite: \(fileName, privacy: .public)")
+        }
+
+        let preflight = FilePreflight.inspect(url: localURL)
+        FilePreflight.log(preflight, logger: logger)
+
+        guard preflight.exists else {
+            throw MTPError.transferFailed(file: remotePath, reason: "Source file does not exist: \(localURL.path)")
+        }
+
+        let fileSize = preflight.fileSize ?? 0
+        guard fileSize > 0 else {
+            throw MTPError.transferFailed(file: remotePath, reason: "Source file is empty: \(localURL.path)")
+        }
+
+        let srcFD = open(localURL.path, O_RDONLY)
+        guard srcFD >= 0 else {
+            let openErrno = Foundation.errno
+            let message = """
+            Could not open source file: \(String(cString: strerror(openErrno))) \
+            (errno=\(openErrno)) \
+            — path: \(localURL.path) \
+            — preflight: readable=\(preflight.readable), mode=\(preflight.posixPermissions.map { String(format: "0%o", $0) } ?? "?"), \
+            quarantined=\(preflight.hasQuarantine), xattrs=[\(preflight.xattrNames.joined(separator: ","))]
+            """
+            logger.error("\(message, privacy: .public)")
+            throw MTPError.transferFailed(file: remotePath, reason: message)
+        }
+        defer { close(srcFD) }
+
+        _ = fcntl(srcFD, F_NOCACHE, 1)
+        _ = fcntl(srcFD, F_RDAHEAD, 1)
+
+        let sent = try sendObjectFromFD(
+            srcFD: srcFD,
+            fileSize: fileSize,
+            fileName: fileName,
+            parentHandle: parentHandle,
+            targetPath: remotePath,
+            progress: progress
+        )
+
+        progress?(sent)
+
+        return sent
+    }
+
+    /// Core SendObjectInfo/OPL logic shared by both writeFile entry points.
+    /// Returns bytes sent on success; throws on failure. Updates handleCache.
+    ///
+    /// The optional `progress` closure is invoked once per USB chunk (4 MB)
+    /// during Phase 2 (SendObject) with bytes-sent-so-far. The closure runs
+    /// synchronously on the actor's executor — hop to @MainActor inside if
+    /// the callee needs UI updates. Keep it fast: this is called ~500 times
+    /// for a 2 GB push and any blocking work here throttles USB throughput.
+    private func sendObjectFromFD(
+        srcFD: Int32,
+        fileSize: UInt64,
+        fileName: String,
+        parentHandle: UInt32,
+        targetPath: String,
+        progress: (@Sendable (UInt64) -> Void)?
+    ) throws -> UInt64 {
+        guard let s = session else { throw MTPError.deviceNotFound }
+
+        var newHandle: UInt32 = 0
+        let format = mtpFormatFromExtension(fileName)
+
+        let deviceAdvertisesOPL = mtp_operation_supported(s, UInt16(MTP_OP_SEND_OBJECT_PROP_LIST)) == 1
+        let oplQuirkBroken = deviceProfile.quirks.contains(.brokenSendObjectPropList)
+        let useOPL = deviceAdvertisesOPL && !oplQuirkBroken
+
+        let runSend: (Bool) -> Int32 = { [self] legacy in
+            if let progress {
+                var progressClosure = progress
+                return withUnsafeMutablePointer(to: &progressClosure) { closurePtr in
+                    let cb: @convention(c) (UInt64, UnsafeMutableRawPointer?) -> Void = { bytesSoFar, ctx in
+                        guard let ctx else { return }
+                        ctx.assumingMemoryBound(to: (@Sendable (UInt64) -> Void).self).pointee(bytesSoFar)
+                    }
+                    if legacy {
+                        return mtp_send_object_from_fd(
+                            s, parentHandle, primaryStorageID,
+                            fileName, fileSize, format, srcFD, &newHandle,
+                            cb, closurePtr
+                        )
+                    } else {
+                        return mtp_send_object_proplist_from_fd(
+                            s, parentHandle, primaryStorageID,
+                            fileName, fileSize, format, srcFD, &newHandle,
+                            cb, closurePtr
+                        )
+                    }
+                }
+            } else {
+                if legacy {
+                    return mtp_send_object_from_fd(
+                        s, parentHandle, primaryStorageID,
+                        fileName, fileSize, format, srcFD, &newHandle, nil, nil
+                    )
+                } else {
+                    return mtp_send_object_proplist_from_fd(
+                        s, parentHandle, primaryStorageID,
+                        fileName, fileSize, format, srcFD, &newHandle, nil, nil
+                    )
+                }
+            }
+        }
+
+        var oplSucceeded = false
+        if useOPL {
+            let result = runSend(/* legacy: */ false)
+            if result == 0 {
+                oplSucceeded = true
+            } else {
+                logger.warning("SendObjectPropList failed (\(self.lastError(), privacy: .public)) — retrying with legacy SendObjectInfo")
+                _ = lseek(srcFD, 0, SEEK_SET)
+            }
+        }
+
+        if !oplSucceeded {
+            let result = runSend(/* legacy: */ true)
+            guard result == 0 else {
+                throw MTPError.transferFailed(file: targetPath, reason: lastError())
+            }
+        }
+
+        handleCache[targetPath] = newHandle
+        return fileSize
     }
 
     func deleteFile(at path: String) async throws {
@@ -463,6 +729,63 @@ actor MTPNativeEngine: TransferEngine {
         let parentPath = (path as NSString).deletingLastPathComponent
         let newPath = (parentPath as NSString).appendingPathComponent(newName)
         handleCache[newPath] = handle
+    }
+
+    // MARK: - Directory Creation
+
+    /// Recursively create directories along a path, creating any missing components.
+    /// Returns the handle of the deepest (leaf) directory.
+    private func createDirectoryRecursive(at path: String) throws -> UInt32 {
+        guard let s = session else { throw MTPError.deviceNotFound }
+
+        let components = path.split(separator: "/").map(String.init).filter { !$0.isEmpty }
+        if components.isEmpty { return 0xFFFFFFFF }
+
+        var currentParent: UInt32 = 0xFFFFFFFF
+        var builtPath = ""
+
+        for component in components {
+            builtPath += "/\(component)"
+
+            if let cached = handleCache[builtPath] {
+                currentParent = cached
+                continue
+            }
+
+            // Try to find existing directory
+            var handles = [UInt32](repeating: 0, count: 5000)
+            let count = mtp_get_object_handles(s, primaryStorageID, currentParent, 0, &handles, 5000)
+
+            var found = false
+            if count > 0 {
+                var infos = [mtp_object_info_t](repeating: mtp_object_info_t(), count: Int(count))
+                let infoCount = mtp_get_object_info_batch(s, &handles, &infos, count)
+
+                for i in 0..<Int(infoCount) {
+                    let name = safeString(from: infos[i].filename)
+                    if name.caseInsensitiveCompare(component) == .orderedSame {
+                        currentParent = infos[i].object_handle
+                        handleCache[builtPath] = currentParent
+                        found = true
+                        break
+                    }
+                }
+            }
+
+            // Create if not found
+            if !found {
+                var newHandle: UInt32 = 0
+                let result = mtp_create_folder(s, currentParent, primaryStorageID, component, &newHandle)
+                guard result == 0 else {
+                    throw MTPError.transferFailed(file: path, reason: "Failed to create directory: \(component)")
+                }
+                currentParent = newHandle
+                handleCache[builtPath] = newHandle
+                logger.info("Created directory: \(builtPath, privacy: .private(mask: .hash))")
+            }
+        }
+
+        return currentParent
     }
 
     // MARK: - Device Info
@@ -538,7 +861,7 @@ actor MTPNativeEngine: TransferEngine {
                 let siblingPath = parentPrefix.isEmpty ? "/\(name)" : "\(parentPrefix)/\(name)"
                 handleCache[siblingPath] = infos[i].object_handle
 
-                if name == component {
+                if name.caseInsensitiveCompare(component) == .orderedSame {
                     currentParent = infos[i].object_handle
                     found = true
                 }
@@ -577,7 +900,7 @@ actor MTPNativeEngine: TransferEngine {
             let entryPath = parentPath == "/" ? "/\(name)" : "\(parentPath)/\(name)"
             handleCache[entryPath] = infos[i].object_handle
 
-            if name == fileName {
+            if name.caseInsensitiveCompare(fileName) == .orderedSame {
                 return infos[i].object_handle
             }
         }
@@ -591,52 +914,32 @@ actor MTPNativeEngine: TransferEngine {
     /// Image Capture.app uses this daemon to claim the USB interface for photo import.
     /// If it's running when we try to open the MTP session, our claim fails.
     private func releasePTPCamera() async {
-        // Unload the PTPCamera launch agent to prevent respawn, then kill it.
-        // Just killing it isn't enough — launchd respawns it within milliseconds.
-        let unload = Process()
-        unload.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        unload.arguments = ["bootout", "gui/\(getuid())", "/System/Library/LaunchAgents/com.apple.PTPCamera.plist"]
-        unload.standardOutput = FileHandle.nullDevice
-        unload.standardError = FileHandle.nullDevice
-        try? unload.run()
-        unload.waitUntilExit()
+        // Disable ptpcamerad via launchctl so it won't respawn after being killed.
+        // This is the only reliable way on macOS 26 — killall alone causes respawn.
+        let uid = getuid()
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        process.arguments = ["-9", "PTPCamera"]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        let disable = Process()
+        disable.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        disable.arguments = ["disable", "gui/\(uid)/com.apple.ptpcamerad"]
+        disable.standardOutput = FileHandle.nullDevice
+        disable.standardError = FileHandle.nullDevice
+        try? disable.run()
+        disable.waitUntilExit()
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-            if process.terminationStatus == 0 {
-                logger.info("Killed PTPCamera daemon")
-            }
-        } catch {
-            // Not running — fine
+        // Kill the running ptpcamerad (it won't respawn now)
+        let kill = Process()
+        kill.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
+        kill.arguments = ["-9", "ptpcamerad"]
+        kill.standardOutput = FileHandle.nullDevice
+        kill.standardError = FileHandle.nullDevice
+        try? kill.run()
+        kill.waitUntilExit()
+
+        if kill.terminationStatus == 0 {
+            logger.info("Disabled and killed ptpcamerad")
+            // Wait for kernel driver to release the USB interface
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
-
-        // Also handle ApplePhotoMTPClientAgent
-        let unload2 = Process()
-        unload2.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        unload2.arguments = ["bootout", "gui/\(getuid())", "/System/Library/LaunchAgents/com.apple.ApplePhotoMTPClientAgent.plist"]
-        unload2.standardOutput = FileHandle.nullDevice
-        unload2.standardError = FileHandle.nullDevice
-        try? unload2.run()
-        unload2.waitUntilExit()
-
-        let agent = Process()
-        agent.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        agent.arguments = ["-9", "ApplePhotoMTPClientAgent"]
-        agent.standardOutput = FileHandle.nullDevice
-        agent.standardError = FileHandle.nullDevice
-        try? agent.run()
-        agent.waitUntilExit()
-
-        // Wait for the kernel driver to release the interface
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        logger.info("PTPCamera launch agent disabled and process killed")
     }
 
     // MARK: - Helpers

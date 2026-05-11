@@ -7,6 +7,7 @@ import Foundation
 import SwiftUI
 import FileProvider
 import Combine
+import IOKit
 internal import GRDB
 import SnapHaulKit
 import os
@@ -207,6 +208,13 @@ final class AppState: ObservableObject {
             activeEngine = nil
         }
 
+        // Release the retained io_service_t if it wasn't consumed by IOUSBHost transport.
+        // The IOUSBHostTransport retains its own copy on open(), so this release balances
+        // the retain in DeviceMonitor.extractDeviceInfo(retainService: true).
+        if let usbDevice = connectedUSBDevice, usbDevice.ioService != 0 {
+            IOObjectRelease(usbDevice.ioService)
+        }
+
         deviceState = nil
         connectedUSBDevice = nil
 
@@ -264,28 +272,42 @@ final class AppState: ObservableObject {
                 do {
                     try await engine.connect(device: usbDevice)
                 } catch {
-                    // If the preferred engine fails (e.g., ADB not authorized),
-                    // fall back to the other engine before giving up.
-                    let isADBEngine = engine is ADBEngine
-                    let fallbackEngine: (any TransferEngine)?
-
-                    if isADBEngine {
-                        self.logger.warning("ADB connect failed (\(error.localizedDescription)), falling back to native MTP")
-                        fallbackEngine = MTPNativeEngine()
-                    } else {
-                        if self.isADBAvailable {
-                            self.logger.warning("MTP connect failed (\(error.localizedDescription)), falling back to ADB")
-                            fallbackEngine = ADBEngine()
-                        } else {
-                            fallbackEngine = nil
+                    // Retry with backoff — IOKit fires before MTP is ready
+                    var connected = false
+                    for attempt in 2...3 {
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                        do {
+                            try await engine.connect(device: usbDevice)
+                            connected = true
+                            break
+                        } catch {
+                            self.logger.debug("Connect attempt \(attempt) failed, retrying...")
                         }
                     }
 
-                    if let fallback = fallbackEngine {
-                        await MainActor.run { self.activeEngine = fallback }
-                        try await fallback.connect(device: usbDevice)
-                    } else {
-                        throw error
+                    if !connected {
+                        // Fall back to the other engine
+                        let isADBEngine = engine is ADBEngine
+                        let fallbackEngine: (any TransferEngine)?
+
+                        if isADBEngine {
+                            self.logger.warning("ADB connect failed (\(error.localizedDescription)), falling back to native MTP")
+                            fallbackEngine = MTPNativeEngine()
+                        } else {
+                            if self.isADBAvailable {
+                                self.logger.warning("MTP connect failed (\(error.localizedDescription)), falling back to ADB")
+                                fallbackEngine = ADBEngine()
+                            } else {
+                                fallbackEngine = nil
+                            }
+                        }
+
+                        if let fallback = fallbackEngine {
+                            await MainActor.run { self.activeEngine = fallback }
+                            try await fallback.connect(device: usbDevice)
+                        } else {
+                            throw error
+                        }
                     }
                 }
 
@@ -399,11 +421,25 @@ final class AppState: ObservableObject {
                 adbAvailable: isADBAvailable
             )
 
-            do {
-                try await engine.connect(device: usbDevice)
-                activeEngine = engine
-            } catch {
-                // Fallback: if preferred engine fails, try the other one
+            // Retry connection with backoff — IOKit fires before MTP is ready
+            var lastError: Error?
+            for attempt in 1...3 {
+                do {
+                    try await engine.connect(device: usbDevice)
+                    activeEngine = engine
+                    lastError = nil
+                    break
+                } catch {
+                    lastError = error
+                    if attempt < 3 {
+                        logger.debug("Connect attempt \(attempt) failed, retrying in 2s...")
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    }
+                }
+            }
+
+            // If all retries failed, try fallback engine
+            if let error = lastError {
                 let isADBEngine = engine is ADBEngine
                 let fallbackEngine: (any TransferEngine)?
 
@@ -477,13 +513,40 @@ final class AppState: ObservableObject {
         try await engine.writeFile(at: remotePath, data: data)
     }
 
-    /// Push a local file to the device. Uses memory-mapped reads.
-    func pushFile(from localURL: URL, to remotePath: String) async throws {
+    /// Push a local file to the device by streaming it directly from disk.
+    ///
+    /// Activates security-scoped access for files that came from outside the
+    /// app container (drag-drop from Finder, NSOpenPanel). macOS issues a
+    /// temporary grant when the user hands us the URL; `startAccessing-
+    /// SecurityScopedResource()` converts that grant into a readable fd.
+    /// Without this, `open()` on `~/Pictures/**` returns EPERM under App
+    /// Sandbox even though the user clearly meant to share the file.
+    func pushFile(
+        from localURL: URL,
+        to remotePath: String,
+        progress: (@Sendable (UInt64) -> Void)? = nil
+    ) async throws {
         guard let engine = activeEngine else {
             throw ADBError.deviceOffline(device: "unknown")
         }
-        let data = try Data(contentsOf: localURL, options: .mappedIfSafe)
-        try await engine.writeFile(at: remotePath, data: data)
+
+        let didStartAccess = localURL.startAccessingSecurityScopedResource()
+        logger.info("pushFile: startAccessingSecurityScopedResource returned \(didStartAccess, privacy: .public) for \(localURL.path, privacy: .public)")
+        defer {
+            if didStartAccess {
+                localURL.stopAccessingSecurityScopedResource()
+                logger.debug("pushFile: stopped security-scoped access for \(localURL.path, privacy: .public)")
+            }
+        }
+
+        // Preflight at the AppState boundary too — this shows any difference
+        // between the "scope started" view of the file and the engine's view.
+        // If preflight here shows readable=true but the engine's preflight
+        // shows readable=false, we have an actor-hop ordering bug.
+        let preflight = FilePreflight.inspect(url: localURL)
+        FilePreflight.log(preflight, logger: logger)
+
+        _ = try await engine.writeFile(at: remotePath, from: localURL, progress: progress)
     }
 
     func renameFile(at remotePath: String, to newName: String) async throws {

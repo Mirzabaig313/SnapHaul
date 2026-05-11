@@ -7,6 +7,7 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 import SnapHaulKit
+import os
 
 /// Full app window — file manager with sidebar, device browser, and transfer status.
 struct MainWindowView: View {
@@ -698,46 +699,102 @@ struct MainWindowView: View {
 
     // MARK: - Drag & Drop
 
-    private func handleDropFromFinder(_ providers: [NSItemProvider]) {
-        let urlProviders = providers.filter { $0.canLoadObject(ofClass: URL.self) }
-        guard !urlProviders.isEmpty else { return }
+    private nonisolated static let dropLogger = Logger(subsystem: "com.snaphaul.app", category: "drop")
 
+    private func handleDropFromFinder(_ providers: [NSItemProvider]) {
         Task { @MainActor in
-            var fileURLs: [URL] = []
-            for provider in urlProviders {
-                if let url = await loadURL(from: provider), url.isFileURL {
-                    fileURLs.append(url)
+            var bookmarks: [Data] = []
+            for provider in providers {
+                if provider.hasItemConformingToTypeIdentifier("public.file-url") {
+                    if let data = await Self.bookmarkData(from: provider) {
+                        bookmarks.append(data)
+                    }
                 }
             }
-            guard !fileURLs.isEmpty else { return }
-            self.pushFilesToDevice(fileURLs)
+            guard !bookmarks.isEmpty else { return }
+            self.pushBookmarkedFilesToDevice(bookmarks)
         }
     }
 
-    /// Load a URL from an NSItemProvider using async/await.
-    private func loadURL(from provider: NSItemProvider) async -> URL? {
+    /// Extract a security-scoped bookmark from an NSItemProvider. Uses
+    /// `loadInPlaceFileRepresentation` so the URL we see has an active
+    /// sandbox grant — we immediately mint a bookmark that survives past
+    /// the closure's lifetime.
+    private static func bookmarkData(from provider: NSItemProvider) async -> Data? {
         await withCheckedContinuation { continuation in
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                continuation.resume(returning: url)
+            _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: "public.file-url") { url, inPlace, error in
+                if let error {
+                    Self.dropLogger.error("loadInPlaceFileRepresentation failed: \(error.localizedDescription, privacy: .public)")
+                }
+                guard let url else {
+                    Self.dropLogger.warning("loadInPlaceFileRepresentation returned nil URL")
+                    continuation.resume(returning: nil)
+                    return
+                }
+                Self.dropLogger.info("Drop URL resolved: \(url.path, privacy: .public) inPlace=\(inPlace, privacy: .public)")
+
+                let preflight = FilePreflight.inspect(url: url)
+                FilePreflight.log(preflight, logger: Self.dropLogger)
+
+                do {
+                    let data = try url.bookmarkData(
+                        options: .withSecurityScope,
+                        includingResourceValuesForKeys: nil,
+                        relativeTo: nil
+                    )
+                    Self.dropLogger.info("Bookmark minted (\(data.count, privacy: .public) bytes) for \(url.lastPathComponent, privacy: .public)")
+                    continuation.resume(returning: data)
+                } catch {
+                    Self.dropLogger.error("bookmarkData failed for \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    continuation.resume(returning: nil)
+                }
             }
         }
     }
 
-    /// Push local Mac files to the current device directory.
-    private func pushFilesToDevice(_ urls: [URL]) {
-        // Calculate total size
-        var totalSize: UInt64 = 0
-        for url in urls {
-            if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-               let size = attrs[.size] as? UInt64 {
-                totalSize += size
-            }
+    /// Push local Mac files to the current device directory, starting from
+    /// security-scoped bookmarks (from drag-drop). Each bookmark is resolved
+    /// on the push side which re-activates the sandbox grant.
+    @MainActor
+    private func pushBookmarkedFilesToDevice(_ bookmarks: [Data]) {
+        struct ResolvedDrop {
+            let url: URL
+            let size: UInt64
+            let didStartScope: Bool
         }
+
+        var resolved: [ResolvedDrop] = []
+        var totalSize: UInt64 = 0
+
+        for data in bookmarks {
+            var isStale = false
+            guard let url = try? URL(
+                resolvingBookmarkData: data,
+                options: .withSecurityScope,
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) else {
+                Self.dropLogger.warning("Failed to resolve security-scoped bookmark")
+                continue
+            }
+            if isStale {
+                Self.dropLogger.warning("Bookmark for \(url.path, privacy: .public) is stale — resource may have moved")
+            }
+
+            let started = url.startAccessingSecurityScopedResource()
+            Self.dropLogger.info("Resolved \(url.path, privacy: .public) — startAccessingSecurityScopedResource=\(started, privacy: .public) stale=\(isStale, privacy: .public)")
+
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? UInt64 ?? 0
+            resolved.append(ResolvedDrop(url: url, size: size, didStartScope: started))
+            totalSize += size
+        }
+
+        guard !resolved.isEmpty else { return }
 
         isTransferring = true
         transferError = nil
         transferredFiles = 0
-        totalTransferFiles = urls.count
+        totalTransferFiles = resolved.count
         transferredBytes = 0
         totalTransferBytes = totalSize
         transferStartTime = Date()
@@ -751,34 +808,54 @@ struct MainWindowView: View {
             }
         }
 
-        Task {
-            do {
-                var completedBytes: UInt64 = 0
-                for url in urls {
-                    let remotePath = currentPath.hasSuffix("/")
-                        ? "\(currentPath)\(url.lastPathComponent)"
-                        : "\(currentPath)/\(url.lastPathComponent)"
-                    try await appState.pushFile(from: url, to: remotePath)
-                    let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? UInt64 ?? 0
-                    completedBytes += fileSize
-                    await MainActor.run {
-                        transferredFiles += 1
-                        transferredBytes = completedBytes
-                    }
-                }
-                await MainActor.run {
-                    refreshTimer.invalidate()
-                    isTransferring = false
-                    loadDirectory(currentPath)
-                }
-            } catch {
-                await MainActor.run {
-                    refreshTimer.invalidate()
-                    isTransferring = false
-                    transferError = error.localizedDescription
+        Task { @MainActor in
+            defer {
+                for drop in resolved where drop.didStartScope {
+                    drop.url.stopAccessingSecurityScopedResource()
                 }
             }
+
+            do {
+                var completedBytes: UInt64 = 0
+
+                for drop in resolved {
+                    let remotePath = currentPath.hasSuffix("/")
+                        ? "\(currentPath)\(drop.url.lastPathComponent)"
+                        : "\(currentPath)/\(drop.url.lastPathComponent)"
+
+                    let baseBytes = completedBytes
+                    try await appState.pushFile(from: drop.url, to: remotePath) { bytesSoFar in
+                        Task { @MainActor in
+                            let fileProgress = min(bytesSoFar, drop.size)
+                            self.transferredBytes = baseBytes + fileProgress
+                        }
+                    }
+
+                    completedBytes += drop.size
+                    transferredFiles += 1
+                    transferredBytes = completedBytes
+                }
+                refreshTimer.invalidate()
+                isTransferring = false
+                loadDirectory(currentPath)
+            } catch {
+                refreshTimer.invalidate()
+                isTransferring = false
+                transferError = error.localizedDescription
+            }
         }
+    }
+
+    /// Push local Mac files (from NSOpenPanel — already have security scope)
+    /// to the current device directory.
+    ///
+    /// Currently unused. Drag-drop from Finder goes through
+    /// `pushBookmarkedFilesToDevice` because `NSItemProvider.loadObject`
+    /// strips the security scope. NSOpenPanel callers can wire this up if
+    /// we surface a "Send to Device" action later.
+    @available(*, unavailable, message: "Use pushBookmarkedFilesToDevice for drops. NSOpenPanel paths go direct to appState.pushFile.")
+    private func pushFilesToDevice(_ urls: [URL]) {
+        _ = urls
     }
 
     // MARK: - Actions
@@ -914,30 +991,34 @@ struct MainWindowView: View {
             }
         }
 
-        Task {
+        Task { @MainActor in
             do {
+                var completedBytes: UInt64 = 0
                 for url in urls {
                     let remotePath = currentPath.hasSuffix("/")
                         ? "\(currentPath)\(url.lastPathComponent)"
                         : "\(currentPath)/\(url.lastPathComponent)"
-                    try await appState.pushFile(from: url, to: remotePath)
                     let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? UInt64 ?? 0
-                    await MainActor.run {
-                        transferredFiles += 1
-                        transferredBytes += fileSize
+
+                    let baseBytes = completedBytes
+                    try await appState.pushFile(from: url, to: remotePath) { bytesSoFar in
+                        Task { @MainActor in
+                            let fileProgress = min(bytesSoFar, fileSize)
+                            self.transferredBytes = baseBytes + fileProgress
+                        }
                     }
+
+                    completedBytes += fileSize
+                    transferredFiles += 1
+                    transferredBytes = completedBytes
                 }
-                await MainActor.run {
-                    refreshTimer.invalidate()
-                    isTransferring = false
-                    loadDirectory(currentPath)
-                }
+                refreshTimer.invalidate()
+                isTransferring = false
+                loadDirectory(currentPath)
             } catch {
-                await MainActor.run {
-                    refreshTimer.invalidate()
-                    isTransferring = false
-                    transferError = error.localizedDescription
-                }
+                refreshTimer.invalidate()
+                isTransferring = false
+                transferError = error.localizedDescription
             }
         }
     }

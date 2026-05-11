@@ -40,7 +40,6 @@ xcodegen --version
 ## Step 2 — Generate the Xcode project
 
 ```bash
-cd /Users/mirza/Documents/PROJECTS/Media_Ingest_Pro/MediaIngestPro
 xcodegen generate
 ```
 

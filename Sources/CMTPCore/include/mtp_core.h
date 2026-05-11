@@ -57,6 +57,14 @@
 #define MTP_OP_GET_OBJECT_PROPS_SUPPORTED 0x9801
 #define MTP_OP_GET_OBJECT_PROP_VALUE    0x9802
 #define MTP_OP_SET_OBJECT_PROP_VALUE    0x9803
+#define MTP_OP_SEND_OBJECT_PROP_LIST    0x9808  // MTP modern object creation
+
+// MTP DataType codes for ObjectPropList (Object Property List)
+#define MTP_DATATYPE_UINT8              0x0002
+#define MTP_DATATYPE_UINT16             0x0004
+#define MTP_DATATYPE_UINT32             0x0006
+#define MTP_DATATYPE_UINT64             0x000A
+#define MTP_DATATYPE_STRING             0xFFFF
 
 // Object format codes (MTP spec §6.2)
 #define MTP_FORMAT_UNDEFINED            0x3000
@@ -165,6 +173,11 @@ typedef struct {
 // MTP Session State
 // ============================================================================
 
+// Supported-operations cap. MTP spec (§5) reserves 0x1000–0xFFFF so there
+// are ~61k opcodes, but real devices advertise <256. libmtp uses a dynamic
+// malloc'd array; we use a fixed buffer to keep the session POD-allocatable.
+#define MTP_MAX_SUPPORTED_OPS 512
+
 typedef struct {
     uint32_t session_id;
     uint32_t transaction_id;    // Auto-incremented per operation
@@ -179,6 +192,23 @@ typedef struct {
 
     // USB interface callbacks
     mtp_usb_interface_t usb;
+
+    // Supported operations advertised by the device (parsed from GetDeviceInfo).
+    // Populated by mtp_parse_device_info() or mtp_get_device_info_parsed().
+    // Consumers must check has_device_info before trusting supported_ops.
+    int has_device_info;
+    uint16_t supported_ops[MTP_MAX_SUPPORTED_OPS];
+    int supported_ops_count;
+
+    // Vendor extension ID from DeviceInfo (0x00000006 = Microsoft MTP, etc.).
+    // Useful for distinguishing standard MTP from PTP-only cameras.
+    uint32_t vendor_extension_id;
+
+    // If set, the device emits a 64-bit ObjectCompressedSize in ObjectInfo
+    // datasets (Samsung Galaxy quirk). Detected at parse time by
+    // mtp_parse_object_info, used when packing outgoing ObjectInfo.
+    // Matches libmtp's PTPParams::ocs64 flag.
+    int ocs64;
 
     // Error state
     uint16_t last_response_code;
@@ -217,6 +247,21 @@ int mtp_close_session(mtp_session_t *session);
 /// @return 0 on success, -1 on error
 int mtp_get_device_info(mtp_session_t *session, void *info_buf,
                         size_t info_buf_size, size_t *bytes_out);
+
+/// Fetch GetDeviceInfo and parse the SupportedOperations array into the
+/// session. Must be called once after mtp_open_session() if you plan to
+/// gate optional operations (e.g., SendObjectPropList 0x9808) on device
+/// capability. On success, session->has_device_info is set and
+/// mtp_operation_supported() returns meaningful results.
+/// @return 0 on success, -1 on error (check session->last_error)
+int mtp_get_device_info_parsed(mtp_session_t *session);
+
+/// Check whether the device advertises a given MTP operation code in its
+/// GetDeviceInfo response. Requires mtp_get_device_info_parsed() to have
+/// been called first; returns 0 if device info was never fetched (fail-closed:
+/// callers must treat "unknown" as "not supported" and use fallback paths).
+/// @return 1 if supported, 0 otherwise
+int mtp_operation_supported(const mtp_session_t *session, uint16_t opcode);
 
 /// Discover storage IDs. Populates session->storage_ids and storage_count.
 int mtp_get_storage_ids(mtp_session_t *session);
@@ -296,11 +341,40 @@ int mtp_get_partial_object_64_to_fd(mtp_session_t *session, uint32_t handle,
 /// @param file_size Size of the file to send
 /// @param src_fd Source file descriptor (opened with O_RDONLY)
 /// @param new_handle Output: handle assigned by device
+/// @param progress_fn Optional callback invoked per chunk during the
+///   Phase 2 (SendObject) streaming loop. Receives bytes-sent-so-far.
+///   NULL to disable. Invoked on the calling thread from inside the
+///   bulk transfer loop — keep the callback fast and non-blocking.
+/// @param progress_ctx Opaque context pointer passed to progress_fn.
 /// @return 0 on success, -1 on error
 int mtp_send_object_from_fd(mtp_session_t *session, uint32_t parent_handle,
                             uint32_t storage_id, const char *filename,
                             uint64_t file_size, uint16_t format,
-                            int src_fd, uint32_t *new_handle);
+                            int src_fd, uint32_t *new_handle,
+                            void (*progress_fn)(uint64_t bytes_so_far, void *ctx),
+                            void *progress_ctx);
+
+/// Push a file using SendObjectPropList (modern MTP, used by libmtp/OpenMTP).
+/// Uses MTP_OP_SEND_OBJECT_PROP_LIST (0x9808) which is more reliable than
+/// the legacy SendObjectInfo on Android 10+ devices. Supports 64-bit file sizes
+/// natively without the 4GB limit workaround.
+/// @param parent_handle Destination folder handle
+/// @param storage_id Target storage
+/// @param filename Filename on device
+/// @param file_size Size of the file to send (64-bit, no 4GB limit)
+/// @param format Object format code (e.g., MTP_FORMAT_UNDEFINED for arbitrary)
+/// @param src_fd Source file descriptor (opened with O_RDONLY)
+/// @param new_handle Output: handle assigned by device
+/// @param progress_fn Optional per-chunk progress callback (see
+///   mtp_send_object_from_fd for semantics).
+/// @param progress_ctx Opaque context pointer passed to progress_fn.
+/// @return 0 on success, -1 on error
+int mtp_send_object_proplist_from_fd(mtp_session_t *session, uint32_t parent_handle,
+                                     uint32_t storage_id, const char *filename,
+                                     uint64_t file_size, uint16_t format,
+                                     int src_fd, uint32_t *new_handle,
+                                     void (*progress_fn)(uint64_t bytes_so_far, void *ctx),
+                                     void *progress_ctx);
 
 // ============================================================================
 // Object Management

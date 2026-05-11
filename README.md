@@ -180,7 +180,6 @@ brew install libusb
 
 # Clone and build
 git clone https://github.com/user/snaphaul.git
-cd snaphaul/MediaIngestPro
 swift build
 .build/debug/SnapHaul
 ```
@@ -243,10 +242,10 @@ xcodebuild -project SnapHaul.xcodeproj \
 
 | Version | Focus | Highlights |
 |:--------|:------|:-----------|
-| **v1.0** | Core | Custom MTP stack (CMTPCore), ADB engine, File Provider, ingest pipeline, delta-sync, checksum verification, EXIF naming, file browser, menu bar, drag-and-drop |
-| **v1.1** | Workflow | Wi-Fi transfer, thumbnails, multi-destination copy, PDF/CSV/JSON reports, post-ingest hooks, sidecar pairing, localization |
-| **v1.2** | Performance | Power-aware mode, adaptive chunks, smart queue ordering, multi-device simultaneous ingest, NAS destinations |
-| **v2.0** | Platform | SD card / camera card ingest (Canon, Sony, Nikon, Fuji, GoPro, DJI), CLI tool, IOUSBHost migration (eliminate libusb), FSKit evaluation |
+| **v0.1.0** | Core | Custom MTP stack (CMTPCore), ADB engine, File Provider, ingest pipeline, delta-sync, checksum verification, EXIF naming, file browser, menu bar, drag-and-drop |
+| **v0.1.1** | Workflow | Wi-Fi transfer, thumbnails, multi-destination copy, PDF/CSV/JSON reports, post-ingest hooks, sidecar pairing, localization |
+| **v0.1.2** | Performance | Power-aware mode, adaptive chunks, smart queue ordering, multi-device simultaneous ingest, NAS destinations |
+| **v0.2.0** | Platform | SD card / camera card ingest (Canon, Sony, Nikon, Fuji, GoPro, DJI), CLI tool, IOUSBHost migration (eliminate libusb), FSKit evaluation |
 
 ---
 

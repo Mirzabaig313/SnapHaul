@@ -204,6 +204,28 @@ actor ADBEngine: TransferEngine {
         _ = try await runADB(["-s", serial, "push", tempURL.path, path])
     }
 
+    func writeFile(
+        at remotePath: String,
+        from localURL: URL,
+        progress: (@Sendable (UInt64) -> Void)?
+    ) async throws -> UInt64 {
+        let serial = try requireSerial()
+        // `adb push` takes a path directly, so we don't need to stage or copy.
+        // Progress callback isn't wired through — `adb push` writes its own
+        // progress line to stdout, we could parse it later if users want
+        // live progress for ADB, but MTP is the primary engine.
+        let output = try await runADB(["-s", serial, "push", localURL.path, remotePath])
+        let pushed = FastADBParser.parsePullOutput(output)?.bytesTransferred
+        if let pushed { progress?(pushed) }
+
+        if let pushed, pushed > 0 { return pushed }
+        if let size = (try? FileManager.default.attributesOfItem(atPath: localURL.path))?[.size] as? UInt64 {
+            progress?(size)
+            return size
+        }
+        return 0
+    }
+
     func deleteFile(at path: String) async throws {
         let serial = try requireSerial()
         _ = try await runADB(["-s", serial, "shell", "rm", "-f", path])

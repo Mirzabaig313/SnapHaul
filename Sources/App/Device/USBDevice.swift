@@ -25,6 +25,12 @@ public struct USBDevice: Sendable, Equatable {
     public let usbMode: USBMode
     public let usbSpeed: USBSpeed
 
+    /// IOKit service handle for this device. Used by IOUSBHost transport to
+    /// open the device with exclusive capture. The handle is retained by the
+    /// caller (DeviceMonitor) and must be released when no longer needed.
+    /// Value is 0 if the service handle is not available.
+    public let ioService: UInt32
+
     public init(
         serialNumber: String,
         vendorID: UInt16,
@@ -32,7 +38,8 @@ public struct USBDevice: Sendable, Equatable {
         displayName: String,
         manufacturer: String,
         usbMode: USBMode,
-        usbSpeed: USBSpeed
+        usbSpeed: USBSpeed,
+        ioService: UInt32 = 0
     ) {
         self.serialNumber = serialNumber
         self.vendorID = vendorID
@@ -41,6 +48,7 @@ public struct USBDevice: Sendable, Equatable {
         self.manufacturer = manufacturer
         self.usbMode = usbMode
         self.usbSpeed = usbSpeed
+        self.ioService = ioService
     }
 }
 

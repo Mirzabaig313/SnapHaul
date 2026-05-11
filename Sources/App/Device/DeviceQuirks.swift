@@ -25,6 +25,11 @@ enum DeviceQuirks {
         static let generalErrorOnDuplicateSession = QuirkSet(rawValue: 1 << 7)
         static let scopedStorageSlowdown = QuirkSet(rawValue: 1 << 8)
         static let truncatedObjectInfo = QuirkSet(rawValue: 1 << 9)
+        /// SendObjectPropList (0x9808) is advertised but returns
+        /// OperationNotSupported (0x2005). Observed on Xiaomi/HyperOS,
+        /// Huawei EMUI, and a handful of Samsung firmware revisions.
+        /// Matches libmtp's DEVICE_FLAG_BROKEN_SEND_OBJECT_PROPLIST.
+        static let brokenSendObjectPropList = QuirkSet(rawValue: 1 << 10)
 
         var description: String {
             var names: [String] = []
@@ -38,6 +43,7 @@ enum DeviceQuirks {
             if contains(.generalErrorOnDuplicateSession) { names.append("generalErrorOnDuplicateSession") }
             if contains(.scopedStorageSlowdown) { names.append("scopedStorageSlowdown") }
             if contains(.truncatedObjectInfo) { names.append("truncatedObjectInfo") }
+            if contains(.brokenSendObjectPropList) { names.append("brokenSendObjectPropList") }
             return names.isEmpty ? "none" : names.joined(separator: ", ")
         }
     }
@@ -80,7 +86,8 @@ enum DeviceQuirks {
         vendorXiaomi: DeviceProfile(
             vendorName: "Xiaomi",
             quirks: [.slowEnumeration, .throttledMTPSpeed,
-                     .generalErrorOnDuplicateSession, .scopedStorageSlowdown],
+                     .generalErrorOnDuplicateSession, .scopedStorageSlowdown,
+                     .brokenSendObjectPropList],
             keepAliveInterval: 12,
             connectionTimeout: 10,
             interOpDelay: 30
@@ -143,7 +150,8 @@ enum DeviceQuirks {
         ),
         vendorHuawei: DeviceProfile(
             vendorName: "Huawei",
-            quirks: [.slowEnumeration, .scopedStorageSlowdown],
+            quirks: [.slowEnumeration, .scopedStorageSlowdown,
+                     .brokenSendObjectPropList],
             keepAliveInterval: 12,
             connectionTimeout: 10,
             interOpDelay: 20

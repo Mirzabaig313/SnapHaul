@@ -248,14 +248,23 @@ final class DeviceMonitor: @unchecked Sendable {
         var service: io_service_t = IOIteratorNext(iterator)
 
         while service != 0 {
-            if let usbDevice = extractDeviceInfo(from: service) {
+            let usbDevice = extractDeviceInfo(from: service, retainService: isArrival)
+
+            if let usbDevice {
                 if isArrival {
+                    // For arrivals, the io_service_t is retained inside USBDevice.ioService.
+                    // The consumer (MTPNativeEngine via IOUSBHostTransport) is responsible
+                    // for releasing it after opening the IOUSBHostDevice.
                     handleAndroidDeviceArrival(usbDevice)
                 } else {
                     handleAndroidDeviceRemoval(usbDevice)
+                    IOObjectRelease(service)
                 }
+            } else {
+                // Not an Android device or extraction failed — always release
+                IOObjectRelease(service)
             }
-            IOObjectRelease(service)
+
             service = IOIteratorNext(iterator)
         }
     }
@@ -267,7 +276,12 @@ final class DeviceMonitor: @unchecked Sendable {
     /// Returns nil if the device is not a known Android device.
     /// Uses `knownAndroidVIDs` (broad set) for the detection gate, and
     /// `androidVendors` (labeled dictionary) for the manufacturer display name.
-    private func extractDeviceInfo(from service: io_service_t) -> USBDevice? {
+    ///
+    /// - Parameter retainService: If true, the io_service_t is retained and stored
+    ///   in the returned USBDevice for later use by IOUSBHost transport. The caller
+    ///   must NOT release the service if this returns non-nil with retainService=true.
+    ///   If this returns nil, the service is NOT retained regardless of this flag.
+    private func extractDeviceInfo(from service: io_service_t, retainService: Bool = false) -> USBDevice? {
         var props: Unmanaged<CFMutableDictionary>?
         let result = IORegistryEntryCreateCFProperties(
             service, &props, kCFAllocatorDefault, 0
@@ -306,6 +320,16 @@ final class DeviceMonitor: @unchecked Sendable {
         // requires enumerating interface descriptors (Phase 2).
         let usbMode: USBMode = .mtp
 
+        // Retain the io_service_t if requested — IOUSBHost transport needs it
+        // to open the device with exclusive capture (deviceCapture option).
+        let serviceHandle: UInt32
+        if retainService {
+            IOObjectRetain(service)
+            serviceHandle = service
+        } else {
+            serviceHandle = 0
+        }
+
         return USBDevice(
             serialNumber: serialNumber,
             vendorID: vendorID,
@@ -313,7 +337,8 @@ final class DeviceMonitor: @unchecked Sendable {
             displayName: productName,
             manufacturer: manufacturer,
             usbMode: usbMode,
-            usbSpeed: usbSpeed
+            usbSpeed: usbSpeed,
+            ioService: serviceHandle
         )
     }
 
