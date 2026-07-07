@@ -16,7 +16,6 @@ struct EXIFParser {
     private let logger = Logger(subsystem: "com.snaphaul.app", category: "exif")
 
     /// Cached date formatter for EXIF date strings.
-    /// `DateFormatter` is expensive to create — reuse across all parse calls.
     private static let exifDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"

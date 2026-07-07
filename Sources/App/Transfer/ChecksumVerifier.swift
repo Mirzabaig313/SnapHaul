@@ -5,14 +5,13 @@
 
 import Foundation
 import SnapHaulKit
-import CryptoKit
+internal import CryptoKit
 import os
 
 /// Verifies file integrity after transfer by comparing checksums.
 ///
 /// Uses memory-mapped reads for the local file to avoid allocating
-/// a separate read buffer. The kernel pages in only what the hash
-/// function touches.
+/// a separate read buffer.
 struct ChecksumVerifier {
 
     private let logger = Logger(
@@ -34,10 +33,8 @@ struct ChecksumVerifier {
         engine: any TransferEngine,
         algorithm: ChecksumAlgorithm = .xxh3
     ) async throws -> Bool {
-        // Hash local file using mmap
         let localHash = try hashLocalFile(at: localURL, algorithm: algorithm)
 
-        // Try remote checksum first (ADB can do this on-device)
         if let remoteHash = try await engine.remoteChecksum(at: remotePath, algorithm: algorithm) {
             let match = localHash == remoteHash
             if !match {
@@ -55,7 +52,7 @@ struct ChecksumVerifier {
         let remoteHash: String
         switch algorithm {
         case .xxh3:
-            remoteHash = XXHasher.hash(data: remoteData)
+            remoteHash = FastXXH3.hash(data: remoteData)
         case .sha256:
             remoteHash = sha256Hash(data: remoteData)
         }
@@ -73,7 +70,7 @@ struct ChecksumVerifier {
     private func hashLocalFile(at url: URL, algorithm: ChecksumAlgorithm) throws -> String {
         switch algorithm {
         case .xxh3:
-            return try XXHasher.hashFile(at: url)
+            return try FastXXH3.hashFile(at: url)
         case .sha256:
             let data = try Data(contentsOf: url, options: .mappedIfSafe)
             return sha256Hash(data: data)

@@ -12,11 +12,8 @@ import os
 /// Monitors USB device connect/disconnect events via IOKit.
 ///
 /// Uses `IOServiceAddMatchingNotification` for event-driven detection.
-/// No polling — the kernel calls us when a USB device appears or disappears.
-///
-/// The monitor runs its own RunLoop on a background thread to receive
-/// IOKit notifications without blocking the main thread. All IOKit
-/// resource cleanup happens on that same thread to avoid data races.
+/// Runs its own RunLoop on a background thread. All IOKit resource
+/// cleanup happens on that same thread to avoid data races.
 final class DeviceMonitor: @unchecked Sendable {
 
     private let logger = Logger(
@@ -25,9 +22,7 @@ final class DeviceMonitor: @unchecked Sendable {
     )
 
     /// Called on the main thread when an Android device is connected.
-    var onDeviceConnected: ((DeviceState) -> Void)?
-
-    /// Called on the main thread when a device is disconnected.
+    var onDeviceConnected: ((USBDevice) -> Void)?
     var onDeviceDisconnected: ((String) -> Void)?
 
     private var notificationPort: IONotificationPortRef?
@@ -49,25 +44,36 @@ final class DeviceMonitor: @unchecked Sendable {
     /// Must be released exactly once during cleanup.
     private var retainedSelf: Unmanaged<DeviceMonitor>?
 
-    /// Known Android USB vendor IDs.
+    /// Known Android USB vendor IDs → manufacturer label.
+    /// Used for display purposes. Detection gate uses `knownAndroidVIDs` (broader set).
     private static let androidVendors: [UInt16: String] = [
         0x04E8: "Samsung",
         0x18D1: "Google",
         0x054C: "Sony",
         0x2717: "Xiaomi",
-        0x2A70: "OnePlus",
+        0x2A70: "OPPO",
+        0x22D9: "OnePlus",
         0x22B8: "Motorola",
-        0x2916: "Google (Pixel)",
         0x1004: "LG",
         0x0BB4: "HTC",
         0x12D1: "Huawei",
         0x2A45: "Meizu",
-        0x0FCE: "Sony Ericsson",
+        0x0FCE: "Sony",
         0x19D2: "ZTE",
         0x1532: "Razer",
-        0x0E8D: "MediaTek",
-        0x2B4C: "Nothing",
+        0x2D95: "vivo",
+        0x3511: "Honor",
+        0x2A96: "realme",
     ]
+
+    /// Broader set of VIDs that indicate an Android device, including chipset-vendor
+    /// VIDs used by brands we can't identify by VID alone.
+    private static let knownAndroidVIDs: Set<UInt16> = {
+        var vids = Set(androidVendors.keys)
+        vids.insert(0x0E8D)  // MediaTek — used by Transsion (Tecno, Infinix, itel)
+        vids.insert(0x2B4C)  // ZUK/Beijing SHENQI — possibly Nothing
+        return vids
+    }()
 
     // MARK: - Start / Stop
 
@@ -76,9 +82,6 @@ final class DeviceMonitor: @unchecked Sendable {
         guard !isRunning else { return }
         isRunning = true
 
-        // Retain self for the duration of monitoring. IOKit callbacks
-        // hold a raw pointer to us — we must guarantee we stay alive.
-        // cleanupOnExit() on the monitor thread is responsible for releasing this.
         retainedSelf = Unmanaged.passRetained(self)
 
         let thread = Thread { [weak self] in
@@ -101,17 +104,12 @@ final class DeviceMonitor: @unchecked Sendable {
         guard isRunning else { return }
         isRunning = false
 
-        // Signal the background run loop to exit.
-        // The run loop thread will clean up IOKit resources before exiting.
         if let rl = backgroundRunLoop {
             CFRunLoopStop(rl)
         }
 
-        // Wait for the monitor thread to fully exit before clearing references.
-        // This ensures cleanupOnExit() has run and released retainedSelf before
-        // we return — preventing a race where deinit fires while the thread is
-        // still mid-cleanup and retainedSelf is released twice.
-        // Timeout of 2s is generous — the run loop exits within one 1s tick.
+        // Wait for the monitor thread to fully exit — ensures cleanupOnExit()
+        // has released retainedSelf before we return.
         _ = threadExitSemaphore.wait(timeout: .now() + 2)
         monitorThread = nil
         backgroundRunLoop = nil
@@ -127,20 +125,14 @@ final class DeviceMonitor: @unchecked Sendable {
             if let rl = backgroundRunLoop {
                 CFRunLoopStop(rl)
             }
-            // retainedSelf is intentionally NOT released here.
-            // cleanupOnExit() on the monitor thread owns that release.
-            // If the thread never started (e.g., startMonitoring failed),
-            // retainedSelf is nil and there is nothing to release.
         }
     }
 
     // MARK: - IOKit Monitor Loop
 
     private func runMonitorLoop() {
-        // Capture this thread's run loop so stopMonitoring can signal it.
         backgroundRunLoop = CFRunLoopGetCurrent()
 
-        // Create notification port
         guard let port = IONotificationPortCreate(kIOMainPortDefault) else {
             logger.error("Failed to create IONotificationPort")
             cleanupOnExit()
@@ -148,19 +140,15 @@ final class DeviceMonitor: @unchecked Sendable {
         }
         notificationPort = port
 
-        // Add the notification port to this thread's run loop
         let runLoopSource = IONotificationPortGetRunLoopSource(port).takeUnretainedValue()
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .defaultMode)
 
-        // The raw pointer passed to IOKit callbacks.
-        // Uses the retained reference created in startMonitoring().
         guard let selfPtr = retainedSelf?.toOpaque() else {
             logger.error("No retained self pointer for IOKit callbacks")
             cleanupOnExit()
             return
         }
 
-        // Register for device arrival
         guard let matching = IOServiceMatching(kIOUSBDeviceClassName) else {
             logger.error("Failed to create matching dictionary")
             cleanupOnExit()
@@ -185,7 +173,6 @@ final class DeviceMonitor: @unchecked Sendable {
         // Drain the iterator to arm the notification (required by IOKit)
         drainIterator(addedIterator, isArrival: true)
 
-        // Register for device removal (need a new matching dict — IOKit consumes the previous one)
         guard let removalMatching = IOServiceMatching(kIOUSBDeviceClassName) else {
             logger.error("Failed to create removal matching dictionary")
             cleanupOnExit()
@@ -211,8 +198,6 @@ final class DeviceMonitor: @unchecked Sendable {
         drainIterator(removedIterator, isArrival: false)
 
         logger.info("IOKit notifications registered, entering run loop")
-
-        // Run the loop until stopped via CFRunLoopStop or thread cancellation
         while isRunning && !Thread.current.isCancelled {
             CFRunLoopRunInMode(.defaultMode, 1.0, true)
         }
@@ -241,8 +226,6 @@ final class DeviceMonitor: @unchecked Sendable {
             notificationPort = nil
         }
 
-        // Release the retained reference to self.
-        // After this, IOKit callbacks must not fire (we've destroyed the port).
         retainedSelf?.release()
         retainedSelf = nil
     }
@@ -260,21 +243,28 @@ final class DeviceMonitor: @unchecked Sendable {
     }
 
     /// Iterate through all devices in the iterator and process them.
-    ///
-    /// IOKit requires draining the iterator to arm the notification for
-    /// the next event. Each call to `IOIteratorNext` returns one device.
+    /// IOKit requires draining the iterator to arm the next notification.
     private func drainIterator(_ iterator: io_iterator_t, isArrival: Bool) {
         var service: io_service_t = IOIteratorNext(iterator)
 
         while service != 0 {
-            if let usbDevice = extractDeviceInfo(from: service) {
+            let usbDevice = extractDeviceInfo(from: service, retainService: isArrival)
+
+            if let usbDevice {
                 if isArrival {
+                    // For arrivals, the io_service_t is retained inside USBDevice.ioService.
+                    // The consumer (MTPNativeEngine via IOUSBHostTransport) is responsible
+                    // for releasing it after opening the IOUSBHostDevice.
                     handleAndroidDeviceArrival(usbDevice)
                 } else {
                     handleAndroidDeviceRemoval(usbDevice)
+                    IOObjectRelease(service)
                 }
+            } else {
+                // Not an Android device or extraction failed — always release
+                IOObjectRelease(service)
             }
-            IOObjectRelease(service)
+
             service = IOIteratorNext(iterator)
         }
     }
@@ -283,8 +273,15 @@ final class DeviceMonitor: @unchecked Sendable {
 
     /// Extract USB device properties from an IOKit service object.
     ///
-    /// Returns nil if the device is not an Android device (based on vendor ID).
-    private func extractDeviceInfo(from service: io_service_t) -> USBDevice? {
+    /// Returns nil if the device is not a known Android device.
+    /// Uses `knownAndroidVIDs` (broad set) for the detection gate, and
+    /// `androidVendors` (labeled dictionary) for the manufacturer display name.
+    ///
+    /// - Parameter retainService: If true, the io_service_t is retained and stored
+    ///   in the returned USBDevice for later use by IOUSBHost transport. The caller
+    ///   must NOT release the service if this returns non-nil with retainService=true.
+    ///   If this returns nil, the service is NOT retained regardless of this flag.
+    private func extractDeviceInfo(from service: io_service_t, retainService: Bool = false) -> USBDevice? {
         var props: Unmanaged<CFMutableDictionary>?
         let result = IORegistryEntryCreateCFProperties(
             service, &props, kCFAllocatorDefault, 0
@@ -298,10 +295,13 @@ final class DeviceMonitor: @unchecked Sendable {
         let vendorID = (dict["idVendor"] as? Int).map { UInt16($0) } ?? 0
         let productID = (dict["idProduct"] as? Int).map { UInt16($0) } ?? 0
 
-        // Filter: only process known Android vendors
-        guard let manufacturer = Self.androidVendors[vendorID] else {
+        // Gate: only process devices with known Android VIDs
+        guard Self.knownAndroidVIDs.contains(vendorID) else {
             return nil
         }
+
+        // Label: use the vendor dictionary if available, otherwise derive from product string
+        let manufacturer = Self.androidVendors[vendorID] ?? "Android"
 
         let productName = dict["USB Product Name"] as? String
             ?? dict["Product Name"] as? String
@@ -320,6 +320,16 @@ final class DeviceMonitor: @unchecked Sendable {
         // requires enumerating interface descriptors (Phase 2).
         let usbMode: USBMode = .mtp
 
+        // Retain the io_service_t if requested — IOUSBHost transport needs it
+        // to open the device with exclusive capture (deviceCapture option).
+        let serviceHandle: UInt32
+        if retainService {
+            IOObjectRetain(service)
+            serviceHandle = service
+        } else {
+            serviceHandle = 0
+        }
+
         return USBDevice(
             serialNumber: serialNumber,
             vendorID: vendorID,
@@ -327,7 +337,8 @@ final class DeviceMonitor: @unchecked Sendable {
             displayName: productName,
             manufacturer: manufacturer,
             usbMode: usbMode,
-            usbSpeed: usbSpeed
+            usbSpeed: usbSpeed,
+            ioService: serviceHandle
         )
     }
 
@@ -358,18 +369,8 @@ final class DeviceMonitor: @unchecked Sendable {
             "Android device connected: \(device.displayName) [\(device.manufacturer)] vendor:0x\(vendorHex) mode:\(device.usbMode.rawValue) speed:\(device.usbSpeed.description)"
         )
 
-        let deviceState = DeviceState(
-            serialNumber: device.serialNumber,
-            displayName: "\(device.manufacturer) \(device.displayName)",
-            manufacturer: device.manufacturer,
-            model: device.displayName,
-            connectionStatus: .connected,
-            engineType: .mtp,
-            usbSpeedDescription: device.usbSpeed.description
-        )
-
         DispatchQueue.main.async { [weak self] in
-            self?.onDeviceConnected?(deviceState)
+            self?.onDeviceConnected?(device)
         }
     }
 
@@ -389,10 +390,7 @@ final class DeviceMonitor: @unchecked Sendable {
 // MARK: - C Callback Trampolines
 
 /// C function pointer callback for device arrival.
-///
-/// IOKit requires a C function pointer — we use `Unmanaged` to bridge
-/// back to our Swift `DeviceMonitor` instance. The reference was retained
-/// in `startMonitoring()` and is released in `cleanupOnExit()`.
+/// IOKit requires a C function pointer — we bridge back via `Unmanaged`.
 private func deviceAddedCallback(
     refcon: UnsafeMutableRawPointer?,
     iterator: io_iterator_t

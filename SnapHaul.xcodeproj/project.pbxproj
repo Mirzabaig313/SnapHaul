@@ -14,7 +14,6 @@
 		162C63E608E6675A85764B96 /* ADBEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F185075D38B3571DE729459 /* ADBEngine.swift */; };
 		1873910F71A5643011E31FAE /* FileTypeFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 743A4F975FF2847E54C14232 /* FileTypeFilterTests.swift */; };
 		1A939108CDA13F754B60108C /* ChecksumVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5687885620EA532438F935BB /* ChecksumVerifier.swift */; };
-		1C59475F5DF23CBA451CA9FC /* MTPEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C3FED8D587F0A1E2521D19 /* MTPEngine.swift */; };
 		1E5787D1F2C1FE9C860E0782 /* ADBError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 071038FEED68C865C955A576 /* ADBError.swift */; };
 		1E63AE62ED85E149B56FDF09 /* SecurityScopedBookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = B66A3BBEE1FBD03F31E5FDA2 /* SecurityScopedBookmark.swift */; };
 		20CB38657443C7116AB58D95 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E3769C3257F86E1584A4610 /* AppState.swift */; };
@@ -22,9 +21,11 @@
 		295049BC6513343D3CC6F1E2 /* placeholder.txt in Resources */ = {isa = PBXBuildFile; fileRef = CF65B3713C98D9002F9F0064 /* placeholder.txt */; };
 		2F5AFA62EF91557FBD12A521 /* FileTypeFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFFA04212DF92DF3EA4F16B8 /* FileTypeFilter.swift */; };
 		33449190BF2B5D70A984064E /* ProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD424AABD9D040B7F4CD3D5B /* ProfileStore.swift */; };
+		354DBCF0A35454C62D3CFF1E /* FileNameUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = FADE7A60E9A3810642B15EB8 /* FileNameUtils.swift */; };
 		392155F1B88E0066A4F80563 /* ManifestStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5ADF93B4763ED03F558CA0A /* ManifestStore.swift */; };
 		3A17D5B872B3A6C76E059725 /* TransferCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34C236CB83BE7B52253272DD /* TransferCoordinator.swift */; };
 		4471FE3E5BAB8FA8E34A0BEC /* SnapHaulKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D70F5CD43DA00040E3342DF /* SnapHaulKit.framework */; };
+		4D7E579E95C3922BB15EE26D /* mtp_core.c in Sources */ = {isa = PBXBuildFile; fileRef = A5DFDF496A5F5826DE68DA80 /* mtp_core.c */; };
 		4E2AA99FE618F04DAFD3BCCD /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F770AD4BC9669439F5A28DE5 /* NotificationManager.swift */; };
 		4FB493EF374E7E5E7D927F95 /* IngestReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7E8A85FD16DF5DCBF1CA136 /* IngestReport.swift */; };
 		51E3DA6B1B59BAC6CB4AF607 /* QuickLookCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F08CBE57DDA0F7A3FA981B3 /* QuickLookCoordinator.swift */; };
@@ -34,19 +35,24 @@
 		5F80DBE5CA742BFA371F83C0 /* USBDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3660E6A9324FB6F0D4309A82 /* USBDevice.swift */; };
 		610062E6B923740324D2CAAB /* FileTypeRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 647F1A7741945104E28FDC44 /* FileTypeRegistry.swift */; };
 		62F2E6BF5F5AE14FE49AA006 /* XPCService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F8D55861F1D5B9535009893 /* XPCService.swift */; };
+		6386411C271B04AD77A5495A /* transfer_utils.c in Sources */ = {isa = PBXBuildFile; fileRef = 2FCAFD97EA73347B57A94CE7 /* transfer_utils.c */; };
 		6565053C36EAE18DF4CE8ADA /* TransferProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = B424C3D0D2095A39D94B4B94 /* TransferProgress.swift */; };
 		6896F022F7E03E53033F1382 /* SnapHaulKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D70F5CD43DA00040E3342DF /* SnapHaulKit.framework */; };
 		6A247104A0D3D68895E6EE16 /* DeviceBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6BC099B621C386B5CE4CD14 /* DeviceBrowserView.swift */; };
 		6E68D625B69D5AD19B52E671 /* TransferStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9562299498E37D7AEAF519C3 /* TransferStore.swift */; };
 		7194706456B08760602E81D4 /* DeviceQuirks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E316C6AE21F088B73215182 /* DeviceQuirks.swift */; };
+		733E079CFFEDF5DF7928B220 /* mtp_usb_transport.c in Sources */ = {isa = PBXBuildFile; fileRef = D249D6945DFD3203740ECA0B /* mtp_usb_transport.c */; };
+		77A08B2C6FE6F43EA64332B5 /* IOUSBHostTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1B2DB0BEC85245B62BB7D77 /* IOUSBHostTransport.swift */; };
 		811C15FAF87D2ADFB57DE391 /* NamingTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5D510729F961BBECE8CB3C6 /* NamingTemplate.swift */; };
 		82A7D1CA561F3A41D6618060 /* TransferEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B0A290C56579BEEFF174936 /* TransferEngine.swift */; };
+		961D679B89CD4B94C9B80F07 /* MTPNativeEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E813CF434050AEF821218BCB /* MTPNativeEngine.swift */; };
 		97115146A399C33F25A721D1 /* DeviceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4985475E9C3C38346E78884 /* DeviceMonitor.swift */; };
 		97F8D06FFD1BD229C92C1F9A /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C018A48C51EF0309F8561A1 /* WelcomeView.swift */; };
 		9ACA613DA51CE95BDE30B4D5 /* MTPError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 706F7DA4E643E0E264CF020D /* MTPError.swift */; };
 		9C4A7E68BEBA8902B39ED16F /* SnapHaulXPCProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 191A197A889AAFEE795853EB /* SnapHaulXPCProtocol.swift */; };
 		A0AC1AF4A6F6E8840D6488FF /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB6F1C9E95E1DD8B33DCD706 /* FileProviderEnumerator.swift */; };
 		A6E538940D4ED50853A397FE /* Database.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13A915E71E8312BF324BECFB /* Database.swift */; };
+		ACECECF46B21A900122E4203 /* FilePreflight.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA91C4A98C26E6502EAAD7C3 /* FilePreflight.swift */; };
 		B687E08E5A38C55C05723935 /* EngineSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = A82E0CF8031A7CCBE6FA8166 /* EngineSelector.swift */; };
 		B89CE61139EF8EDF14A4780F /* MainWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73E3E000D3E91E2A43E993B9 /* MainWindowView.swift */; };
 		BAD2D1FA580D65CCC2E08A4D /* IngestError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FFCFD1A9F289F51C5465959 /* IngestError.swift */; };
@@ -54,6 +60,8 @@
 		C1CF259E34FD5EA3D497B8E0 /* FileItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C4FB74B6D057C7BBCA9D89F /* FileItem.swift */; };
 		C90CF9CA8FA254CAA94160CC /* ADBTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB5449EEBAE11199DBB2B490 /* ADBTest.swift */; };
 		CBA3C47453A73B2095E3FB59 /* FileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81D86DC570B36FE623FEAC6B /* FileProviderItem.swift */; };
+		CD0FBF3189754329BF85A914 /* PowerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A56D3EE5AE9D3C70B039C2A /* PowerManager.swift */; };
+		D091F27CB20C6F197D22DD21 /* FastCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87064FCCE25C1087C8D5ADE6 /* FastCopy.swift */; };
 		D2537D92AF1B276DA27720D1 /* MediaIngestProApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5E93A5E3849342A18EAFAC0 /* MediaIngestProApp.swift */; };
 		DCE548DF781719A4BB58F750 /* USBMonitorTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AAF7AD344ED285EA39F973D /* USBMonitorTest.swift */; };
 		DF7CFE16AD88D92D891E2E11 /* XXHasher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 401D22EE9773646622BB85CE /* XXHasher.swift */; };
@@ -132,17 +140,21 @@
 		191A197A889AAFEE795853EB /* SnapHaulXPCProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapHaulXPCProtocol.swift; sourceTree = "<group>"; };
 		1E3769C3257F86E1584A4610 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		2C018A48C51EF0309F8561A1 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
+		2D002FA1F2811FDE2D5C6DD3 /* module.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = module.modulemap; sourceTree = "<group>"; };
 		2D2208153BAD5E90ACE2F78D /* PreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesView.swift; sourceTree = "<group>"; };
 		2F185075D38B3571DE729459 /* ADBEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ADBEngine.swift; sourceTree = "<group>"; };
+		2FCAFD97EA73347B57A94CE7 /* transfer_utils.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = transfer_utils.c; sourceTree = "<group>"; };
 		312F6889D30595BD44295FC5 /* SnapHaul.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SnapHaul.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		34C236CB83BE7B52253272DD /* TransferCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferCoordinator.swift; sourceTree = "<group>"; };
 		3660E6A9324FB6F0D4309A82 /* USBDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBDevice.swift; sourceTree = "<group>"; };
 		401D22EE9773646622BB85CE /* XXHasher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XXHasher.swift; sourceTree = "<group>"; };
+		448D9CDFB8D3C6028A357E7D /* transfer_utils.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = transfer_utils.h; sourceTree = "<group>"; };
 		4BD96DCB75D660D965630B4A /* DeviceState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceState.swift; sourceTree = "<group>"; };
 		4C779D6E03BCA4CE9E23A8C1 /* EXIFParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EXIFParser.swift; sourceTree = "<group>"; };
 		4E316C6AE21F088B73215182 /* DeviceQuirks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceQuirks.swift; sourceTree = "<group>"; };
 		50F86E20F0527F5941B68502 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		5687885620EA532438F935BB /* ChecksumVerifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecksumVerifier.swift; sourceTree = "<group>"; };
+		5BA6259357AFD5423E0CEDCF /* module.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = module.modulemap; sourceTree = "<group>"; };
 		6438DD254F4049C649BF1A6C /* shim.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = shim.h; sourceTree = "<group>"; };
 		647F1A7741945104E28FDC44 /* FileTypeRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTypeRegistry.swift; sourceTree = "<group>"; };
 		6B0A290C56579BEEFF174936 /* TransferEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferEngine.swift; sourceTree = "<group>"; };
@@ -152,17 +164,24 @@
 		706F7DA4E643E0E264CF020D /* MTPError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MTPError.swift; sourceTree = "<group>"; };
 		73E3E000D3E91E2A43E993B9 /* MainWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowView.swift; sourceTree = "<group>"; };
 		743A4F975FF2847E54C14232 /* FileTypeFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTypeFilterTests.swift; sourceTree = "<group>"; };
+		7B4A0C60CA42311150115566 /* mtp_usb_transport.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = mtp_usb_transport.h; sourceTree = "<group>"; };
 		7D70F5CD43DA00040E3342DF /* SnapHaulKit.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = SnapHaulKit.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		81D86DC570B36FE623FEAC6B /* FileProviderItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderItem.swift; sourceTree = "<group>"; };
+		87064FCCE25C1087C8D5ADE6 /* FastCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FastCopy.swift; sourceTree = "<group>"; };
 		89C100184C6A68A7E3357E03 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
 		8DA4D3FB69A32F6F9B6BA7C8 /* NamingTemplateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NamingTemplateTests.swift; sourceTree = "<group>"; };
 		8F8D55861F1D5B9535009893 /* XPCService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XPCService.swift; sourceTree = "<group>"; };
 		9562299498E37D7AEAF519C3 /* TransferStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferStore.swift; sourceTree = "<group>"; };
+		9A56D3EE5AE9D3C70B039C2A /* PowerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerManager.swift; sourceTree = "<group>"; };
 		9FFCFD1A9F289F51C5465959 /* IngestError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IngestError.swift; sourceTree = "<group>"; };
+		A5DFDF496A5F5826DE68DA80 /* mtp_core.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = mtp_core.c; sourceTree = "<group>"; };
 		A82E0CF8031A7CCBE6FA8166 /* EngineSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineSelector.swift; sourceTree = "<group>"; };
+		AA91C4A98C26E6502EAAD7C3 /* FilePreflight.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilePreflight.swift; sourceTree = "<group>"; };
 		AB5449EEBAE11199DBB2B490 /* ADBTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ADBTest.swift; sourceTree = "<group>"; };
 		AB64CC17F2FF0A3E16ADB7BA /* SnapHaulFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SnapHaulFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF5DE0D8CA19B53B5BCCEF0A /* ByteFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ByteFormatter.swift; sourceTree = "<group>"; };
+		B1381E3FAF17D88C3A557B50 /* mtp_core.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = mtp_core.h; sourceTree = "<group>"; };
+		B1B2DB0BEC85245B62BB7D77 /* IOUSBHostTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOUSBHostTransport.swift; sourceTree = "<group>"; };
 		B424C3D0D2095A39D94B4B94 /* TransferProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferProgress.swift; sourceTree = "<group>"; };
 		B4985475E9C3C38346E78884 /* DeviceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceMonitor.swift; sourceTree = "<group>"; };
 		B5E93A5E3849342A18EAFAC0 /* MediaIngestProApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaIngestProApp.swift; sourceTree = "<group>"; };
@@ -170,18 +189,20 @@
 		B955D71E35572DF31EDA46C8 /* FileOrganizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileOrganizer.swift; sourceTree = "<group>"; };
 		C1AE712F49318D45654C0A86 /* MTPTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MTPTest.swift; sourceTree = "<group>"; };
 		C5ADF93B4763ED03F558CA0A /* ManifestStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestStore.swift; sourceTree = "<group>"; };
-		C5C3FED8D587F0A1E2521D19 /* MTPEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MTPEngine.swift; sourceTree = "<group>"; };
 		C9BE3FF2A2D4395ED165CF00 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		CB6F1C9E95E1DD8B33DCD706 /* FileProviderEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderEnumerator.swift; sourceTree = "<group>"; };
 		CD424AABD9D040B7F4CD3D5B /* ProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileStore.swift; sourceTree = "<group>"; };
 		CF65B3713C98D9002F9F0064 /* placeholder.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = placeholder.txt; sourceTree = "<group>"; };
 		CFFA04212DF92DF3EA4F16B8 /* FileTypeFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTypeFilter.swift; sourceTree = "<group>"; };
+		D249D6945DFD3203740ECA0B /* mtp_usb_transport.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = mtp_usb_transport.c; sourceTree = "<group>"; };
 		D5D510729F961BBECE8CB3C6 /* NamingTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NamingTemplate.swift; sourceTree = "<group>"; };
 		D6BC099B621C386B5CE4CD14 /* DeviceBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceBrowserView.swift; sourceTree = "<group>"; };
 		D7E8A85FD16DF5DCBF1CA136 /* IngestReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IngestReport.swift; sourceTree = "<group>"; };
 		DB14495AB26946E08E0D7D2E /* module.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = module.modulemap; sourceTree = "<group>"; };
 		E6865FE32B60E5FD8B8F67E9 /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
+		E813CF434050AEF821218BCB /* MTPNativeEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MTPNativeEngine.swift; sourceTree = "<group>"; };
 		F770AD4BC9669439F5A28DE5 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
+		FADE7A60E9A3810642B15EB8 /* FileNameUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileNameUtils.swift; sourceTree = "<group>"; };
 		FE9CCBCF34C1F4A65757C101 /* SnapHaulTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SnapHaulTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -261,16 +282,37 @@
 			children = (
 				2F185075D38B3571DE729459 /* ADBEngine.swift */,
 				A82E0CF8031A7CCBE6FA8166 /* EngineSelector.swift */,
-				C5C3FED8D587F0A1E2521D19 /* MTPEngine.swift */,
+				B1B2DB0BEC85245B62BB7D77 /* IOUSBHostTransport.swift */,
+				E813CF434050AEF821218BCB /* MTPNativeEngine.swift */,
 				6B0A290C56579BEEFF174936 /* TransferEngine.swift */,
 			);
 			path = Engines;
+			sourceTree = "<group>";
+		};
+		17523C611CC7DCB0277CE53C /* include */ = {
+			isa = PBXGroup;
+			children = (
+				5BA6259357AFD5423E0CEDCF /* module.modulemap */,
+				448D9CDFB8D3C6028A357E7D /* transfer_utils.h */,
+			);
+			path = include;
+			sourceTree = "<group>";
+		};
+		20E0A137C1BF644C60E67518 /* CTransferUtils */ = {
+			isa = PBXGroup;
+			children = (
+				17523C611CC7DCB0277CE53C /* include */,
+				2FCAFD97EA73347B57A94CE7 /* transfer_utils.c */,
+			);
+			path = CTransferUtils;
 			sourceTree = "<group>";
 		};
 		243B270414CC5C0C7572D202 /* Transfer */ = {
 			isa = PBXGroup;
 			children = (
 				5687885620EA532438F935BB /* ChecksumVerifier.swift */,
+				87064FCCE25C1087C8D5ADE6 /* FastCopy.swift */,
+				9A56D3EE5AE9D3C70B039C2A /* PowerManager.swift */,
 				34C236CB83BE7B52253272DD /* TransferCoordinator.swift */,
 			);
 			path = Transfer;
@@ -337,6 +379,16 @@
 			path = Models;
 			sourceTree = "<group>";
 		};
+		7849D99D6540F4C6B67D1E3E /* include */ = {
+			isa = PBXGroup;
+			children = (
+				2D002FA1F2811FDE2D5C6DD3 /* module.modulemap */,
+				B1381E3FAF17D88C3A557B50 /* mtp_core.h */,
+				7B4A0C60CA42311150115566 /* mtp_usb_transport.h */,
+			);
+			path = include;
+			sourceTree = "<group>";
+		};
 		7A3A92DEA4F6E79A53E7AFC4 /* XPC */ = {
 			isa = PBXGroup;
 			children = (
@@ -372,6 +424,16 @@
 				FE9CCBCF34C1F4A65757C101 /* SnapHaulTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		B4885BE289C925621B2D1F3C /* CMTPCore */ = {
+			isa = PBXGroup;
+			children = (
+				7849D99D6540F4C6B67D1E3E /* include */,
+				A5DFDF496A5F5826DE68DA80 /* mtp_core.c */,
+				D249D6945DFD3203740ECA0B /* mtp_usb_transport.c */,
+			);
+			path = CMTPCore;
 			sourceTree = "<group>";
 		};
 		BC76A81E8994DDDAE4D9BCAF /* Resources */ = {
@@ -414,6 +476,8 @@
 			children = (
 				F7FDF218092A3E8D61579E1F /* App */,
 				C808589F630DC13F86A64EB2 /* CLibMTP */,
+				B4885BE289C925621B2D1F3C /* CMTPCore */,
+				20E0A137C1BF644C60E67518 /* CTransferUtils */,
 				3B3055A7180CD6D524C07EDF /* FileProviderExtension */,
 				CCFE0E303D1F6C7AE40A5F06 /* MediaIngestKit */,
 			);
@@ -445,6 +509,8 @@
 			isa = PBXGroup;
 			children = (
 				AF5DE0D8CA19B53B5BCCEF0A /* ByteFormatter.swift */,
+				FADE7A60E9A3810642B15EB8 /* FileNameUtils.swift */,
+				AA91C4A98C26E6502EAAD7C3 /* FilePreflight.swift */,
 				647F1A7741945104E28FDC44 /* FileTypeRegistry.swift */,
 				B66A3BBEE1FBD03F31E5FDA2 /* SecurityScopedBookmark.swift */,
 				401D22EE9773646622BB85CE /* XXHasher.swift */,
@@ -483,7 +549,7 @@
 				8D6593ED95AAAE75B0EDE0BC /* Frameworks */,
 				71D60A6F4501789546AA02B0 /* Embed Foundation Extensions */,
 				3EA29249B5581CA8B01D696B /* Embed Frameworks */,
-				B5FD7897D010524B796D5035 /* Copy & Sign libmtp/libusb */,
+				9068BF307430CD29F1B809F8 /* Copy & Sign libusb */,
 			);
 			buildRules = (
 			);
@@ -622,7 +688,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		B5FD7897D010524B796D5035 /* Copy & Sign libmtp/libusb */ = {
+		9068BF307430CD29F1B809F8 /* Copy & Sign libusb */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -632,7 +698,7 @@
 			);
 			inputPaths = (
 			);
-			name = "Copy & Sign libmtp/libusb";
+			name = "Copy & Sign libusb";
 			outputFileListPaths = (
 			);
 			outputPaths = (
@@ -652,6 +718,8 @@
 				F9263DCE2E19E4D296F4D193 /* ByteFormatter.swift in Sources */,
 				F428BD91C06580D22E598730 /* DeviceState.swift in Sources */,
 				C1CF259E34FD5EA3D497B8E0 /* FileItem.swift in Sources */,
+				354DBCF0A35454C62D3CFF1E /* FileNameUtils.swift in Sources */,
+				ACECECF46B21A900122E4203 /* FilePreflight.swift in Sources */,
 				2F5AFA62EF91557FBD12A521 /* FileTypeFilter.swift in Sources */,
 				610062E6B923740324D2CAAB /* FileTypeRegistry.swift in Sources */,
 				BAD2D1FA580D65CCC2E08A4D /* IngestError.swift in Sources */,
@@ -687,10 +755,12 @@
 				7194706456B08760602E81D4 /* DeviceQuirks.swift in Sources */,
 				56658AE7D5AFCB87548A0820 /* EXIFParser.swift in Sources */,
 				B687E08E5A38C55C05723935 /* EngineSelector.swift in Sources */,
+				D091F27CB20C6F197D22DD21 /* FastCopy.swift in Sources */,
 				5E4BF64611FBF5DA53931554 /* FileOrganizer.swift in Sources */,
+				77A08B2C6FE6F43EA64332B5 /* IOUSBHostTransport.swift in Sources */,
 				10F05BCA26DDF2DEA4407F67 /* IngestEngine.swift in Sources */,
 				27F6A54FB7C721FAAA12004A /* IngestProfile.swift in Sources */,
-				1C59475F5DF23CBA451CA9FC /* MTPEngine.swift in Sources */,
+				961D679B89CD4B94C9B80F07 /* MTPNativeEngine.swift in Sources */,
 				ECEC6518BF59CEF2D54A7CC6 /* MTPTest.swift in Sources */,
 				B89CE61139EF8EDF14A4780F /* MainWindowView.swift in Sources */,
 				392155F1B88E0066A4F80563 /* ManifestStore.swift in Sources */,
@@ -698,6 +768,7 @@
 				E7562C92720E322E7A85D68F /* MenuBarView.swift in Sources */,
 				811C15FAF87D2ADFB57DE391 /* NamingTemplate.swift in Sources */,
 				4E2AA99FE618F04DAFD3BCCD /* NotificationManager.swift in Sources */,
+				CD0FBF3189754329BF85A914 /* PowerManager.swift in Sources */,
 				052E8740ED8A5FB933317107 /* PreferencesView.swift in Sources */,
 				33449190BF2B5D70A984064E /* ProfileStore.swift in Sources */,
 				51E3DA6B1B59BAC6CB4AF607 /* QuickLookCoordinator.swift in Sources */,
@@ -708,6 +779,9 @@
 				DCE548DF781719A4BB58F750 /* USBMonitorTest.swift in Sources */,
 				97F8D06FFD1BD229C92C1F9A /* WelcomeView.swift in Sources */,
 				62F2E6BF5F5AE14FE49AA006 /* XPCService.swift in Sources */,
+				4D7E579E95C3922BB15EE26D /* mtp_core.c in Sources */,
+				733E079CFFEDF5DF7928B220 /* mtp_usb_transport.c in Sources */,
+				6386411C271B04AD77A5495A /* transfer_utils.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -833,7 +907,7 @@
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-				SWIFT_VERSION = 5.10;
+				SWIFT_VERSION = 6.3.1;
 			};
 			name = Debug;
 		};
@@ -892,7 +966,7 @@
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				SWIFT_VERSION = 5.10;
+				SWIFT_VERSION = 6.3.1;
 			};
 			name = Release;
 		};
@@ -955,7 +1029,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Resources/SnapHaul.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				HEADER_SEARCH_PATHS = "/opt/homebrew/opt/libmtp/include /opt/homebrew/opt/libusb/include";
+				HEADER_SEARCH_PATHS = "/opt/homebrew/opt/libmtp/include /opt/homebrew/opt/libusb/include /opt/homebrew/opt/libusb/include/libusb-1.0 $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include";
 				INFOPLIST_FILE = Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
 				LIBRARY_SEARCH_PATHS = "/opt/homebrew/opt/libmtp/lib /opt/homebrew/opt/libusb/lib";
@@ -964,7 +1038,7 @@
 				PRODUCT_NAME = SnapHaul;
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CLibMTP";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CLibMTP $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include";
 			};
 			name = Release;
 		};
@@ -1003,7 +1077,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Resources/SnapHaul.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				HEADER_SEARCH_PATHS = "/opt/homebrew/opt/libmtp/include /opt/homebrew/opt/libusb/include";
+				HEADER_SEARCH_PATHS = "/opt/homebrew/opt/libmtp/include /opt/homebrew/opt/libusb/include /opt/homebrew/opt/libusb/include/libusb-1.0 $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include";
 				INFOPLIST_FILE = Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
 				LIBRARY_SEARCH_PATHS = "/opt/homebrew/opt/libmtp/lib /opt/homebrew/opt/libusb/lib";
@@ -1012,7 +1086,7 @@
 				PRODUCT_NAME = SnapHaul;
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CLibMTP";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CLibMTP $(SRCROOT)/Sources/CTransferUtils/include $(SRCROOT)/Sources/CMTPCore/include";
 			};
 			name = Debug;
 		};

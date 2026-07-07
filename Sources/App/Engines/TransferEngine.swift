@@ -46,7 +46,29 @@ protocol TransferEngine: Sendable {
     ) async throws -> UInt64
 
     /// Write data to a file on the device.
+    ///
+    /// Use only for small files (<10 MB). For large files, use
+    /// `writeFile(at:from:progress:)`.
     func writeFile(at path: String, data: Data) async throws
+
+    /// Push a local file to the device by streaming directly from disk.
+    ///
+    /// This is the preferred push method — no `Data(contentsOf:)` load, no
+    /// temp-file copy. Uses the engine's native streaming transport (MTP
+    /// SendObjectInfo with an FD, or `adb push` with a path).
+    ///
+    /// - Parameters:
+    ///   - remotePath: Destination path on the device.
+    ///   - localURL: Source file on the Mac. The caller must ensure the URL
+    ///     is readable (security-scoped access started if the file came from
+    ///     outside the app container).
+    ///   - progress: Called periodically with bytes transferred so far.
+    /// - Returns: Total bytes sent.
+    func writeFile(
+        at remotePath: String,
+        from localURL: URL,
+        progress: (@Sendable (UInt64) -> Void)?
+    ) async throws -> UInt64
 
     /// Delete a file on the device.
     func deleteFile(at path: String) async throws

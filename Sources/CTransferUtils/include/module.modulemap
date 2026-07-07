@@ -1,0 +1,5 @@
+module CTransferUtils {
+    header "transfer_utils.h"
+    link "pthread"
+    export *
+}

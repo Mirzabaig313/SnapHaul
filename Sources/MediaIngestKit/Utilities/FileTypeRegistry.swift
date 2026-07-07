@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 
 /// Single source of truth for file type knowledge across the app.
 ///
-/// Used by ADBEngine, MTPEngine, FileProviderItem, and IngestProfile
+/// Used by ADBEngine, MTPNativeEngine, FileProviderItem, and IngestProfile
 /// so all four agree on what a given extension means.
 ///
 /// Design: empty include list = accept everything. This is the default

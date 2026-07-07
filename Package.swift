@@ -1,4 +1,4 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.0
 
 import PackageDescription
 
@@ -25,12 +25,39 @@ let package = Package(
         // .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.6.0")
     ],
     targets: [
-        // System library — libmtp C bridge
+        // System library — libmtp (LIBMTP_Init() required for macOS USB authorization)
         .systemLibrary(
             name: "CLibMTP",
             path: "Sources/CLibMTP",
             pkgConfig: "libmtp",
             providers: [.brew(["libmtp"])]
+        ),
+
+        // C utilities — high-performance file copy, ls parser, Spotlight control
+        .target(
+            name: "CTransferUtils",
+            path: "Sources/CTransferUtils",
+            publicHeadersPath: "include"
+        ),
+
+        // Native MTP protocol stack — container framing, bulk transfer, session management
+        .target(
+            name: "CMTPCore",
+            path: "Sources/CMTPCore",
+            publicHeadersPath: "include",
+            cSettings: [
+                .unsafeFlags([
+                    "-I/opt/homebrew/opt/libusb/include/libusb-1.0",
+                    "-I/usr/local/opt/libusb/include/libusb-1.0"
+                ])
+            ],
+            linkerSettings: [
+                .linkedLibrary("usb-1.0"),
+                .unsafeFlags([
+                    "-L/opt/homebrew/opt/libusb/lib",
+                    "-L/usr/local/opt/libusb/lib"
+                ])
+            ]
         ),
 
         // Shared framework — models, protocols, utilities
@@ -48,9 +75,9 @@ let package = Package(
             name: "SnapHaul",
             dependencies: [
                 "SnapHaulKit",
-                "CLibMTP"
-                // Sparkle removed for development builds — add back with Developer ID signing
-                // .product(name: "Sparkle", package: "Sparkle")
+                "CLibMTP",
+                "CTransferUtils",
+                "CMTPCore"
             ],
             path: "Sources/App",
             resources: [
@@ -64,5 +91,6 @@ let package = Package(
             dependencies: ["SnapHaulKit", "SnapHaul"],
             path: "Tests/UnitTests"
         )
-    ]
+    ],
+    swiftLanguageModes: [.v6]
 )

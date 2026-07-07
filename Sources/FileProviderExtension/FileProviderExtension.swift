@@ -10,17 +10,7 @@ import os
 
 /// File Provider extension — mounts the Android device as a Finder volume.
 ///
-/// Data flow for Android → Mac (user drags file out of device in Finder):
-///   macOS calls fetchContents → extension calls XPC pullFile → host app
-///   calls MTP/ADB engine → file written to temp URL → returned to macOS
-///
-/// Data flow for Mac → Android (user drags file into device in Finder):
-///   macOS calls createItem with a local URL → extension calls XPC pushFile
-///   → host app calls MTP/ADB engine → file written to device
-///
-/// All XPC calls are synchronous from the File Provider's perspective
-/// (using DispatchSemaphore) because NSFileProviderReplicatedExtension
-/// completion handlers are not async-aware.
+/// Communicates with the host app via XPC for all device I/O.
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     private let logger = Logger(
@@ -29,14 +19,16 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     )
 
     let domain: NSFileProviderDomain
-
-    // Cached XPC connection to the host app.
     private var _xpcConnection: NSXPCConnection?
+    private var idleTimer: DispatchSourceTimer?
+    private static let idleTimeout: TimeInterval = 60
+    private let xpcQueue = DispatchQueue(label: "com.snaphaul.fileprovider.xpc")
 
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         super.init()
         logger.info("File Provider initialized for domain: \(domain.displayName)")
+        resetIdleTimer()
     }
 
     // MARK: - XPC
@@ -63,6 +55,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     }
 
     private func hostApp() -> SnapHaulXPCProtocol? {
+        resetIdleTimer()
         guard let conn = xpcConnection else { return nil }
         return conn.remoteObjectProxyWithErrorHandler { [weak self] error in
             self?.logger.error("XPC proxy error: \(error.localizedDescription)")
@@ -74,16 +67,31 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     func invalidate() {
         logger.info("File Provider invalidated")
+        idleTimer?.cancel()
+        idleTimer = nil
         _xpcConnection?.invalidate()
         _xpcConnection = nil
+    }
+
+    /// Reset the idle timer. After 60s of inactivity, the XPC connection is released.
+    private func resetIdleTimer() {
+        idleTimer?.cancel()
+
+        let timer = DispatchSource.makeTimerSource(queue: xpcQueue)
+        timer.schedule(deadline: .now() + Self.idleTimeout)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.logger.info("Idle timeout reached — releasing resources")
+            self._xpcConnection?.invalidate()
+            self._xpcConnection = nil
+        }
+        timer.resume()
+        idleTimer = timer
     }
 
     // MARK: - Item lookup
 
     /// Called by macOS to get metadata for a specific item identifier.
-    ///
-    /// The identifier is the file's path on the device (e.g. "/DCIM/Camera/IMG_001.dng").
-    /// We resolve it by listing the parent directory via XPC and finding the matching entry.
     func item(
         for identifier: NSFileProviderItemIdentifier,
         request: NSFileProviderRequest,
@@ -145,9 +153,6 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     // MARK: - Android → Mac (fetch file contents)
 
     /// Called when the user opens or copies a file from the device volume in Finder.
-    ///
-    /// We pull the file from the Android device via XPC → host app → MTP/ADB engine,
-    /// write it to a temporary URL, and hand that URL back to macOS.
     func fetchContents(
         for itemIdentifier: NSFileProviderItemIdentifier,
         version requestedVersion: NSFileProviderItemVersion?,
@@ -205,9 +210,6 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     // MARK: - Mac → Android (create / upload file)
 
     /// Called when the user drags a file into the device volume in Finder.
-    ///
-    /// `url` is the local file macOS wants us to upload to the device.
-    /// We push it via XPC → host app → MTP/ADB engine.
     func createItem(
         basedOn itemTemplate: NSFileProviderItem,
         fields: NSFileProviderItemFields,
@@ -220,9 +222,6 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
         // Directory creation — no file content to push
         if itemTemplate.contentType == .folder {
-            logger.info("createItem (directory): \(itemTemplate.filename)")
-            // MTP doesn't support creating empty directories via our current engine.
-            // Return the item as-is; the directory will appear after the device is refreshed.
             completionHandler(itemTemplate, [], false, nil)
             progress.completedUnitCount = 100
             return progress
@@ -290,12 +289,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     // MARK: - Modify (rename or overwrite existing file on device)
 
-    /// Called by macOS when the user renames a file in Finder or overwrites it.
-    ///
-    /// `changedFields` tells us what changed:
-    /// - `.filename` set → user renamed the file in Finder
-    /// - `.contents` set (newContents non-nil) → user replaced the file content
-    /// Both can be set simultaneously (rename + overwrite).
+    /// Called by macOS when the user renames or overwrites a file in Finder.
     func modifyItem(
         _ item: NSFileProviderItem,
         baseVersion version: NSFileProviderItemVersion,

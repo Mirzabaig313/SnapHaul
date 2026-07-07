@@ -5,64 +5,308 @@
 
 import Foundation
 
-/// OEM-specific workarounds for known MTP implementation bugs.
+/// Vendor and model-specific MTP quirk profiles for Android 10+ (API 29+) devices.
 ///
-/// Different Android manufacturers implement MTP differently.
-/// This registry maps vendor/product IDs to known quirks and
-/// the workarounds needed.
-///
-/// Add new entries as devices are tested. Document the device name,
-/// firmware version, and the specific bug in a code comment.
+/// Three-tier lookup: vendor defaults → product-string brand detection → model overrides.
 enum DeviceQuirks {
 
-    struct Quirk: Sendable {
-        let vendorID: UInt16
-        let productID: UInt16?  // nil = applies to all products from this vendor
-        let description: String
-        let workaround: Workaround
+    // MARK: - Quirk Flags
+
+    struct QuirkSet: OptionSet, Sendable, CustomStringConvertible {
+        let rawValue: UInt32
+
+        static let samsungPartialObjectBug = QuirkSet(rawValue: 1 << 0)
+        static let shortIdleTimeout = QuirkSet(rawValue: 1 << 1)
+        static let slowEnumeration = QuirkSet(rawValue: 1 << 2)
+        static let suggestADB = QuirkSet(rawValue: 1 << 3)
+        static let highConnectionLatency = QuirkSet(rawValue: 1 << 4)
+        static let customMTPStack = QuirkSet(rawValue: 1 << 5)
+        static let throttledMTPSpeed = QuirkSet(rawValue: 1 << 6)
+        static let generalErrorOnDuplicateSession = QuirkSet(rawValue: 1 << 7)
+        static let scopedStorageSlowdown = QuirkSet(rawValue: 1 << 8)
+        static let truncatedObjectInfo = QuirkSet(rawValue: 1 << 9)
+        /// SendObjectPropList (0x9808) is advertised but returns
+        /// OperationNotSupported (0x2005). Observed on Xiaomi/HyperOS,
+        /// Huawei EMUI, and a handful of Samsung firmware revisions.
+        /// Matches libmtp's DEVICE_FLAG_BROKEN_SEND_OBJECT_PROPLIST.
+        static let brokenSendObjectPropList = QuirkSet(rawValue: 1 << 10)
+
+        var description: String {
+            var names: [String] = []
+            if contains(.samsungPartialObjectBug) { names.append("samsungPartialObjectBug") }
+            if contains(.shortIdleTimeout) { names.append("shortIdleTimeout") }
+            if contains(.slowEnumeration) { names.append("slowEnumeration") }
+            if contains(.suggestADB) { names.append("suggestADB") }
+            if contains(.highConnectionLatency) { names.append("highConnectionLatency") }
+            if contains(.customMTPStack) { names.append("customMTPStack") }
+            if contains(.throttledMTPSpeed) { names.append("throttledMTPSpeed") }
+            if contains(.generalErrorOnDuplicateSession) { names.append("generalErrorOnDuplicateSession") }
+            if contains(.scopedStorageSlowdown) { names.append("scopedStorageSlowdown") }
+            if contains(.truncatedObjectInfo) { names.append("truncatedObjectInfo") }
+            if contains(.brokenSendObjectPropList) { names.append("brokenSendObjectPropList") }
+            return names.isEmpty ? "none" : names.joined(separator: ", ")
+        }
     }
 
-    enum Workaround {
-        /// Use chunked reads for files > 4 GB (Samsung MTP reports wrong size)
-        case chunkedLargeFiles
-        /// Add extra delay between MTP operations (Xiaomi drops connection)
-        case interOperationDelay(milliseconds: Int)
-        /// Re-open session after idle timeout (OnePlus closes session after 60s)
-        case aggressiveKeepAlive(intervalSeconds: Int)
-        /// Skip GetPartialObject (some devices don't support it)
-        case noPartialObject
+    // MARK: - Device Profile
+
+    struct DeviceProfile: Sendable {
+        let vendorName: String
+        let quirks: QuirkSet
+        let keepAliveInterval: UInt
+        let connectionTimeout: UInt
+        let interOpDelay: UInt
     }
 
-    /// Known device quirks registry.
-    ///
-    /// Samsung Galaxy S24/S25: Reports incorrect file size for files > 4 GB via MTP.
-    /// Workaround: Use chunked reads with GetPartialObject.
-    static let knownQuirks: [Quirk] = [
-        Quirk(
-            vendorID: 0x04E8,  // Samsung
-            productID: nil,
-            description: "Samsung MTP reports incorrect size for files > 4 GB",
-            workaround: .chunkedLargeFiles
+    // MARK: - Vendor IDs
+
+    private static let vendorSamsung: UInt16 = 0x04E8
+    private static let vendorGoogle: UInt16 = 0x18D1
+    private static let vendorXiaomi: UInt16 = 0x2717
+    private static let vendorOnePlus: UInt16 = 0x22D9
+    private static let vendorOppo: UInt16 = 0x2A70
+    private static let vendorMotorola: UInt16 = 0x22B8
+    private static let vendorSony: UInt16 = 0x0FCE
+    private static let vendorHuawei: UInt16 = 0x12D1
+    private static let vendorVivo: UInt16 = 0x2D95
+    private static let vendorHonor: UInt16 = 0x3511
+    private static let vendorRealme: UInt16 = 0x2A96
+
+    // MARK: - Vendor Default Profiles
+
+    private static let vendorProfiles: [UInt16: DeviceProfile] = [
+        vendorSamsung: DeviceProfile(
+            vendorName: "Samsung",
+            quirks: [.samsungPartialObjectBug, .shortIdleTimeout, .customMTPStack,
+                     .scopedStorageSlowdown],
+            keepAliveInterval: 10,
+            connectionTimeout: 10,
+            interOpDelay: 0
         ),
-        Quirk(
-            vendorID: 0x2717,  // Xiaomi
-            productID: nil,
-            description: "Xiaomi MTP drops connection during rapid sequential operations",
-            workaround: .interOperationDelay(milliseconds: 50)
+        vendorXiaomi: DeviceProfile(
+            vendorName: "Xiaomi",
+            quirks: [.slowEnumeration, .throttledMTPSpeed,
+                     .generalErrorOnDuplicateSession, .scopedStorageSlowdown,
+                     .brokenSendObjectPropList],
+            keepAliveInterval: 12,
+            connectionTimeout: 10,
+            interOpDelay: 30
         ),
-        Quirk(
-            vendorID: 0x2A70,  // OnePlus
-            productID: nil,
-            description: "OnePlus closes MTP session after 60s idle",
-            workaround: .aggressiveKeepAlive(intervalSeconds: 30)
-        )
+        vendorVivo: DeviceProfile(
+            vendorName: "vivo",
+            quirks: [.scopedStorageSlowdown],
+            keepAliveInterval: 0,
+            connectionTimeout: 0,
+            interOpDelay: 0
+        ),
+        vendorOppo: DeviceProfile(
+            vendorName: "OPPO",
+            quirks: [.scopedStorageSlowdown],
+            keepAliveInterval: 0,
+            connectionTimeout: 10,
+            interOpDelay: 0
+        ),
+        vendorOnePlus: DeviceProfile(
+            vendorName: "OnePlus",
+            quirks: [.scopedStorageSlowdown],
+            keepAliveInterval: 0,
+            connectionTimeout: 10,
+            interOpDelay: 0
+        ),
+        vendorMotorola: DeviceProfile(
+            vendorName: "Motorola",
+            quirks: [.scopedStorageSlowdown],
+            keepAliveInterval: 0,
+            connectionTimeout: 0,
+            interOpDelay: 0
+        ),
+        vendorGoogle: DeviceProfile(
+            vendorName: "Google",
+            quirks: [.scopedStorageSlowdown],
+            keepAliveInterval: 0,
+            connectionTimeout: 0,
+            interOpDelay: 0
+        ),
+        vendorHonor: DeviceProfile(
+            vendorName: "Honor",
+            quirks: [.scopedStorageSlowdown],
+            keepAliveInterval: 0,
+            connectionTimeout: 10,
+            interOpDelay: 0
+        ),
+        vendorRealme: DeviceProfile(
+            vendorName: "realme",
+            quirks: [.scopedStorageSlowdown],
+            keepAliveInterval: 0,
+            connectionTimeout: 10,
+            interOpDelay: 0
+        ),
+        vendorSony: DeviceProfile(
+            vendorName: "Sony",
+            quirks: [.scopedStorageSlowdown],
+            keepAliveInterval: 0,
+            connectionTimeout: 0,
+            interOpDelay: 0
+        ),
+        vendorHuawei: DeviceProfile(
+            vendorName: "Huawei",
+            quirks: [.slowEnumeration, .scopedStorageSlowdown,
+                     .brokenSendObjectPropList],
+            keepAliveInterval: 12,
+            connectionTimeout: 10,
+            interOpDelay: 20
+        ),
     ]
 
-    /// Look up quirks for a given device.
-    static func quirks(vendorID: UInt16, productID: UInt16) -> [Quirk] {
-        knownQuirks.filter { quirk in
-            quirk.vendorID == vendorID &&
-            (quirk.productID == nil || quirk.productID == productID)
+    // MARK: - Model Overrides
+
+    private struct ModelOverride: Sendable {
+        let pattern: String
+        let additionalQuirks: QuirkSet
+        let keepAliveInterval: UInt?
+        let connectionTimeout: UInt?
+        let interOpDelay: UInt?
+    }
+
+    private static let modelOverrides: [UInt16: [ModelOverride]] = [
+        vendorSamsung: [
+            ModelOverride(
+                pattern: "Galaxy A",
+                additionalQuirks: [.slowEnumeration],
+                keepAliveInterval: nil,
+                connectionTimeout: nil,
+                interOpDelay: 10
+            ),
+        ],
+        vendorXiaomi: [
+            ModelOverride(
+                pattern: "POCO",
+                additionalQuirks: [.throttledMTPSpeed],
+                keepAliveInterval: nil,
+                connectionTimeout: nil,
+                interOpDelay: 50
+            ),
+            ModelOverride(
+                pattern: "Redmi Note",
+                additionalQuirks: [.slowEnumeration],
+                keepAliveInterval: nil,
+                connectionTimeout: nil,
+                interOpDelay: 40
+            ),
+        ],
+    ]
+
+    private static let defaultProfile = DeviceProfile(
+        vendorName: "Unknown",
+        quirks: [.scopedStorageSlowdown],
+        keepAliveInterval: 0,
+        connectionTimeout: 0,
+        interOpDelay: 0
+    )
+
+    // MARK: - Product String Brand Detection
+
+    private static let productStringBrands: [(pattern: String, profile: DeviceProfile)] = [
+        ("tecno", DeviceProfile(
+            vendorName: "Tecno",
+            quirks: [.scopedStorageSlowdown, .slowEnumeration],
+            keepAliveInterval: 0, connectionTimeout: 10, interOpDelay: 15
+        )),
+        ("infinix", DeviceProfile(
+            vendorName: "Infinix",
+            quirks: [.scopedStorageSlowdown, .slowEnumeration, .highConnectionLatency],
+            keepAliveInterval: 0, connectionTimeout: 15, interOpDelay: 20
+        )),
+        ("itel", DeviceProfile(
+            vendorName: "itel",
+            quirks: [.scopedStorageSlowdown, .slowEnumeration],
+            keepAliveInterval: 0, connectionTimeout: 10, interOpDelay: 15
+        )),
+        ("nothing", DeviceProfile(
+            vendorName: "Nothing",
+            quirks: [.scopedStorageSlowdown],
+            keepAliveInterval: 0, connectionTimeout: 0, interOpDelay: 0
+        )),
+    ]
+
+    private static func detectBrandFromProductString(_ lowercaseName: String) -> DeviceProfile? {
+        for (pattern, profile) in productStringBrands {
+            if lowercaseName.contains(pattern) {
+                return profile
+            }
         }
+        return nil
+    }
+
+    // MARK: - Public API
+
+    static func profile(for vendorID: UInt16, productName: String? = nil) -> DeviceProfile {
+        var base = vendorProfiles[vendorID] ?? defaultProfile
+
+        if vendorProfiles[vendorID] == nil, let name = productName {
+            if let detected = detectBrandFromProductString(name.lowercased()) {
+                base = detected
+            }
+        }
+
+        guard let name = productName,
+              let overrides = modelOverrides[vendorID] else {
+            return base
+        }
+
+        let lowercaseName = name.lowercased()
+        for override in overrides {
+            if lowercaseName.contains(override.pattern.lowercased()) {
+                return DeviceProfile(
+                    vendorName: base.vendorName,
+                    quirks: base.quirks.union(override.additionalQuirks),
+                    keepAliveInterval: override.keepAliveInterval ?? base.keepAliveInterval,
+                    connectionTimeout: override.connectionTimeout ?? base.connectionTimeout,
+                    interOpDelay: override.interOpDelay ?? base.interOpDelay
+                )
+            }
+        }
+
+        return base
+    }
+
+    static func hasQuirk(_ quirk: QuirkSet, vendorID: UInt16, productName: String? = nil) -> Bool {
+        profile(for: vendorID, productName: productName).quirks.contains(quirk)
+    }
+
+    static func keepAliveInterval(for vendorID: UInt16, productName: String? = nil) -> UInt {
+        let interval = profile(for: vendorID, productName: productName).keepAliveInterval
+        return interval > 0 ? interval : 15
+    }
+
+    static func connectionTimeout(for vendorID: UInt16, productName: String? = nil) -> UInt {
+        let timeout = profile(for: vendorID, productName: productName).connectionTimeout
+        return timeout > 0 ? timeout : 5
+    }
+
+    static func shouldPreferADB(vendorID: UInt16, productName: String? = nil) -> Bool {
+        hasQuirk(.suggestADB, vendorID: vendorID, productName: productName)
+    }
+
+    static func shouldAvoidPartialObject(vendorID: UInt16) -> Bool {
+        false
+    }
+
+    // MARK: - Samsung Boundary Bug
+
+    /// Returns a safe read length if the file triggers Samsung's 512-byte ZLP bug,
+    /// or nil if the read is safe.
+    static func samsungSafePartialReadLength(
+        fileSize: UInt64,
+        offset: UInt64,
+        requestedLength: UInt64
+    ) -> UInt64? {
+        let endOffset = offset + requestedLength
+        guard endOffset >= fileSize else { return nil }
+
+        let remainder = fileSize % 512
+        guard remainder == 500 || remainder == 511 else { return nil }
+
+        return requestedLength > 1 ? requestedLength - 1 : nil
     }
 }

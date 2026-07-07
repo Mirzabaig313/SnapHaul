@@ -6,15 +6,13 @@
 import Foundation
 import SwiftUI
 import FileProvider
-import GRDB
+import Combine
+import IOKit
+internal import GRDB
 import SnapHaulKit
 import os
 
 /// Central application state, observable by all SwiftUI views.
-///
-/// Owns the device monitor, transfer coordinator, and ingest engine.
-/// Acts as the single source of truth for the app's runtime state.
-/// Wires live progress from the transfer coordinator to the UI.
 @MainActor
 final class AppState: ObservableObject {
 
@@ -37,13 +35,10 @@ final class AppState: ObservableObject {
     private let profileStore: ProfileStore
     private let notificationManager: NotificationManager
     private let xpcService: XPCService
+    let powerManager = PowerManager()
     let database: AppDatabase?
 
-    /// The currently active transfer engine (MTP or ADB).
-    /// Exposed for XPC handler access.
     private(set) var activeEngine: (any TransferEngine)?
-
-    /// Handle to the running transfer task so we can cancel it.
     private var transferTask: Task<Void, Never>?
 
     private let logger = Logger(
@@ -61,7 +56,6 @@ final class AppState: ObservableObject {
         self.notificationManager = NotificationManager()
         self.xpcService = XPCService()
 
-        // Initialize database with error handling
         var db: AppDatabase?
         do {
             db = try AppDatabase()
@@ -72,17 +66,13 @@ final class AppState: ObservableObject {
         }
         self.database = db
 
-        // Initialize IngestEngine with database (or a fallback in-memory queue)
         if let dbQueue = db?.dbQueue {
             self.ingestEngine = IngestEngine(database: dbQueue)
         } else {
-            // Fallback: in-memory database — delta-sync won't persist across launches
             let fallbackQueue: DatabaseQueue
             do {
                 fallbackQueue = try DatabaseQueue()
             } catch {
-                // This should never happen — in-memory DB creation is infallible
-                // in practice. If it does, something is catastrophically wrong.
                 fatalError("Cannot create in-memory database: \(error)")
             }
             self.ingestEngine = IngestEngine(database: fallbackQueue)
@@ -90,7 +80,6 @@ final class AppState: ObservableObject {
             logger.warning("Using in-memory database fallback — delta-sync will not persist")
         }
 
-        // Load saved profiles — no auto-default, user creates profiles in Preferences
         self.profiles = profileStore.loadAll()
 
         logger.info("SnapHaul initialized")
@@ -98,16 +87,15 @@ final class AppState: ObservableObject {
         xpcService.appState = self
         xpcService.start()
         startMonitoring()
+        startPowerObservation()
     }
 
     // MARK: - Profile Management
 
-    /// Reload profiles from persistent storage.
     func reloadProfiles() {
         profiles = profileStore.loadAll()
     }
 
-    /// Save the current profiles array to persistent storage.
     func saveProfiles() {
         profileStore.saveAll(profiles)
     }
@@ -115,9 +103,9 @@ final class AppState: ObservableObject {
     // MARK: - Device Monitoring
 
     private func startMonitoring() {
-        deviceMonitor.onDeviceConnected = { [weak self] device in
+        deviceMonitor.onDeviceConnected = { [weak self] usbDevice in
             Task { @MainActor in
-                self?.handleDeviceConnected(device)
+                self?.handleDeviceConnected(usbDevice)
             }
         }
 
@@ -130,29 +118,79 @@ final class AppState: ObservableObject {
         deviceMonitor.startMonitoring()
     }
 
-    private func handleDeviceConnected(_ device: DeviceState) {
-        logger.info("Device connected: \(device.displayName) [\(device.redactedSerial)]")
-        deviceState = device
+    /// Observe power state changes and propagate to the transfer coordinator.
+    private func startPowerObservation() {
+        Task {
+            await transferCoordinator.updatePowerSettings(
+                isOnBattery: powerManager.isOnBattery,
+                isAppForeground: powerManager.isAppForeground
+            )
+        }
 
-        connectedUSBDevice = USBDevice(
-            serialNumber: device.serialNumber,
-            vendorID: 0,
-            productID: 0,
-            displayName: device.displayName,
-            manufacturer: device.manufacturer,
-            usbMode: device.engineType == .adb ? .adb : .mtp,
-            usbSpeed: .unknown
+        powerManager.$isOnBattery.sink { [weak self] isOnBattery in
+            guard let self else { return }
+            Task {
+                await self.transferCoordinator.updatePowerSettings(
+                    isOnBattery: isOnBattery,
+                    isAppForeground: self.powerManager.isAppForeground
+                )
+            }
+        }.store(in: &cancellables)
+
+        powerManager.$isAppForeground.sink { [weak self] isForeground in
+            guard let self else { return }
+            Task {
+                await self.transferCoordinator.updatePowerSettings(
+                    isOnBattery: self.powerManager.isOnBattery,
+                    isAppForeground: isForeground
+                )
+            }
+        }.store(in: &cancellables)
+
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.powerManager.isAppForeground = true
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.powerManager.isAppForeground = false
+            }
+        }
+    }
+
+    /// Combine cancellables.
+    private var cancellables: Set<AnyCancellable> = []
+
+    private func handleDeviceConnected(_ usbDevice: USBDevice) {
+        let redactedSerial = usbDevice.serialNumber.count > 4
+            ? "***" + String(usbDevice.serialNumber.suffix(4))
+            : "****"
+        logger.info("Device connected: \(usbDevice.displayName) [\(redactedSerial)]")
+
+        let device = DeviceState(
+            serialNumber: usbDevice.serialNumber,
+            displayName: "\(usbDevice.manufacturer) \(usbDevice.displayName)",
+            manufacturer: usbDevice.manufacturer,
+            model: usbDevice.displayName,
+            connectionStatus: .connected,
+            engineType: usbDevice.usbMode == .adb ? .adb : .mtp,
+            usbSpeedDescription: usbDevice.usbSpeed.description
         )
+
+        deviceState = device
+        connectedUSBDevice = usbDevice
 
         notificationManager.notifyDeviceConnected(deviceName: device.displayName)
 
-        // Update the File Provider domain display name to the actual device name
-        // so Finder shows "Samsung Galaxy S25" instead of "Android Device".
         updateFileProviderDomainName(device.displayName)
 
-        // Auto-trigger any profiles configured to start on device connect.
-        // Only start the first matching profile — running multiple simultaneous
-        // ingests on connect would be surprising and resource-intensive.
         if let autoProfile = profiles.first(where: { $0.autoTrigger }) {
             logger.info("Auto-triggering ingest profile: \(autoProfile.name)")
             startIngest(profile: autoProfile)
@@ -168,6 +206,13 @@ final class AppState: ObservableObject {
         if let engine = activeEngine {
             Task { await engine.disconnect() }
             activeEngine = nil
+        }
+
+        // Release the retained io_service_t if it wasn't consumed by IOUSBHost transport.
+        // The IOUSBHostTransport retains its own copy on open(), so this release balances
+        // the retain in DeviceMonitor.extractDeviceInfo(retainService: true).
+        if let usbDevice = connectedUSBDevice, usbDevice.ioService != 0 {
+            IOObjectRelease(usbDevice.ioService)
         }
 
         deviceState = nil
@@ -193,9 +238,6 @@ final class AppState: ObservableObject {
     // MARK: - Transfer Actions
 
     /// Start an ingest session using the given profile.
-    ///
-    /// Selects the appropriate engine (MTP or ADB), connects to the device,
-    /// and runs the full ingest pipeline via IngestEngine.
     func startIngest(profile: IngestProfile) {
         guard let device = deviceState else {
             logger.warning("Cannot start ingest: no device connected")
@@ -219,18 +261,55 @@ final class AppState: ObservableObject {
             guard let self else { return }
 
             do {
-                // Select engine based on device state and user preference
                 let engine = self.engineSelector.selectEngine(
                     for: usbDevice,
                     userPreference: UserDefaults.standard.string(forKey: "preferredEngine") ?? "auto",
                     adbAvailable: self.isADBAvailable
                 )
 
-                // Set activeEngine before connecting so the device browser
-                // can use it even if ingest fails partway through.
                 await MainActor.run { self.activeEngine = engine }
 
-                try await engine.connect(device: usbDevice)
+                do {
+                    try await engine.connect(device: usbDevice)
+                } catch {
+                    // Retry with backoff — IOKit fires before MTP is ready
+                    var connected = false
+                    for attempt in 2...3 {
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                        do {
+                            try await engine.connect(device: usbDevice)
+                            connected = true
+                            break
+                        } catch {
+                            self.logger.debug("Connect attempt \(attempt) failed, retrying...")
+                        }
+                    }
+
+                    if !connected {
+                        // Fall back to the other engine
+                        let isADBEngine = engine is ADBEngine
+                        let fallbackEngine: (any TransferEngine)?
+
+                        if isADBEngine {
+                            self.logger.warning("ADB connect failed (\(error.localizedDescription)), falling back to native MTP")
+                            fallbackEngine = MTPNativeEngine()
+                        } else {
+                            if self.isADBAvailable {
+                                self.logger.warning("MTP connect failed (\(error.localizedDescription)), falling back to ADB")
+                                fallbackEngine = ADBEngine()
+                            } else {
+                                fallbackEngine = nil
+                            }
+                        }
+
+                        if let fallback = fallbackEngine {
+                            await MainActor.run { self.activeEngine = fallback }
+                            try await fallback.connect(device: usbDevice)
+                        } else {
+                            throw error
+                        }
+                    }
+                }
 
                 let report = try await self.ingestEngine.runIngest(
                     profile: profile,
@@ -266,8 +345,6 @@ final class AppState: ObservableObject {
                     self.logger.error("Ingest failed: \(error.localizedDescription)")
                     self.isTransferring = false
                     self.transferProgress = nil
-                    // Clear the engine — it may be in a bad state after the error.
-                    // The device browser will reconnect on next use.
                     self.activeEngine = nil
 
                     self.notificationManager.notifyIngestFailed(
@@ -279,7 +356,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Start an ingest session using a profile name (convenience).
+    /// Start an ingest session using a profile name.
     func startIngest(profileName: String) {
         guard let profile = profiles.first(where: { $0.name == profileName }) else {
             logger.warning("Profile not found: \(profileName)")
@@ -308,14 +385,10 @@ final class AppState: ObservableObject {
 
     // MARK: - Helpers
 
-    /// Update the File Provider domain display name to match the connected device.
     private func updateFileProviderDomainName(_ deviceName: String) {
         let domainID = NSFileProviderDomainIdentifier("com.snaphaul.device")
         NSFileProviderManager.getDomainsWithCompletionHandler { domains, _ in
-            guard let domain = domains.first(where: { $0.identifier == domainID }) else {
-                return
-            }
-            // Signal the File Provider to re-enumerate so Finder refreshes
+            guard let domain = domains.first(where: { $0.identifier == domainID }) else { return }
             NSFileProviderManager(for: domain)?.signalEnumerator(
                 for: .rootContainer,
                 completionHandler: { _ in }
@@ -323,10 +396,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Whether an ADB binary is available on this machine.
-    ///
-    /// Checks the same search paths as ADBEngine so the engine selector
-    /// and the engine itself agree on availability.
     private var isADBAvailable: Bool {
         let searchPaths = [
             "/opt/homebrew/bin/adb",
@@ -335,13 +404,11 @@ final class AppState: ObservableObject {
         if searchPaths.contains(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
             return true
         }
-        // Also check if a bundled adb exists in the app bundle
         return Bundle.main.path(forResource: "adb", ofType: nil, inDirectory: "adb") != nil
     }
 
     // MARK: - Device File Browser
 
-    /// Connect to the device engine (if not already connected) and list files at the given path.
     func listDeviceFiles(at path: String) async throws -> [FileItem] {
         guard let usbDevice = connectedUSBDevice else {
             throw ADBError.deviceOffline(device: "unknown")
@@ -353,8 +420,46 @@ final class AppState: ObservableObject {
                 userPreference: UserDefaults.standard.string(forKey: "preferredEngine") ?? "auto",
                 adbAvailable: isADBAvailable
             )
-            try await engine.connect(device: usbDevice)
-            activeEngine = engine
+
+            // Retry connection with backoff — IOKit fires before MTP is ready
+            var lastError: Error?
+            for attempt in 1...3 {
+                do {
+                    try await engine.connect(device: usbDevice)
+                    activeEngine = engine
+                    lastError = nil
+                    break
+                } catch {
+                    lastError = error
+                    if attempt < 3 {
+                        logger.debug("Connect attempt \(attempt) failed, retrying in 2s...")
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    }
+                }
+            }
+
+            // If all retries failed, try fallback engine
+            if let error = lastError {
+                let isADBEngine = engine is ADBEngine
+                let fallbackEngine: (any TransferEngine)?
+
+                if isADBEngine {
+                    logger.warning("ADB connect failed for browse, falling back to native MTP")
+                    fallbackEngine = MTPNativeEngine()
+                } else if isADBAvailable {
+                    logger.warning("MTP connect failed for browse, falling back to ADB")
+                    fallbackEngine = ADBEngine()
+                } else {
+                    fallbackEngine = nil
+                }
+
+                if let fallback = fallbackEngine {
+                    try await fallback.connect(device: usbDevice)
+                    activeEngine = fallback
+                } else {
+                    throw error
+                }
+            }
         }
 
         guard let engine = activeEngine else {
@@ -372,14 +477,7 @@ final class AppState: ObservableObject {
         return try await engine.pullFile(from: remotePath, to: localURL, progress: nil)
     }
 
-    /// Pull a single file with a live byte-count progress callback.
-    ///
-    /// The callback fires periodically with the total bytes written so far.
-    /// For ADB, it fires once at the end (adb pull doesn't report mid-transfer).
-    /// For MTP, it fires once at the end (libmtp progress callback is Phase 3).
-    ///
-    /// To get smooth progress for large files, we poll the destination file
-    /// size on a timer while the engine transfer runs.
+    /// Pull a file with live progress polling (fires every ~0.3s).
     func pullFile(
         from remotePath: String,
         to localURL: URL,
@@ -389,12 +487,9 @@ final class AppState: ObservableObject {
             throw ADBError.deviceOffline(device: "unknown")
         }
 
-        // Start a polling task that checks the file size every 0.3s.
-        // This gives smooth progress even though the engine only reports
-        // bytes at the end — the file grows on disk as the engine writes.
         let pollTask = Task.detached {
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s
+                try? await Task.sleep(nanoseconds: 300_000_000)
                 guard !Task.isCancelled else { break }
                 if let attrs = try? FileManager.default.attributesOfItem(atPath: localURL.path),
                    let size = attrs[.size] as? UInt64, size > 0 {
@@ -405,14 +500,12 @@ final class AppState: ObservableObject {
 
         let totalBytes = try await engine.pullFile(from: remotePath, to: localURL, progress: nil)
 
-        // Stop polling and report final size
         pollTask.cancel()
         onBytesWritten(totalBytes)
 
         return totalBytes
     }
 
-    /// Push data to a file on the device.
     func pushFile(data: Data, to remotePath: String) async throws {
         guard let engine = activeEngine else {
             throw ADBError.deviceOffline(device: "unknown")
@@ -420,21 +513,42 @@ final class AppState: ObservableObject {
         try await engine.writeFile(at: remotePath, data: data)
     }
 
-    /// Push a local Mac file to the device by path.
+    /// Push a local file to the device by streaming it directly from disk.
     ///
-    /// Reads the file lazily — does not load the entire file into memory.
-    /// Used by the XPC handler so the Finder Sync extension can push files
-    /// without the host app buffering them.
-    func pushFile(from localURL: URL, to remotePath: String) async throws {
+    /// Activates security-scoped access for files that came from outside the
+    /// app container (drag-drop from Finder, NSOpenPanel). macOS issues a
+    /// temporary grant when the user hands us the URL; `startAccessing-
+    /// SecurityScopedResource()` converts that grant into a readable fd.
+    /// Without this, `open()` on `~/Pictures/**` returns EPERM under App
+    /// Sandbox even though the user clearly meant to share the file.
+    func pushFile(
+        from localURL: URL,
+        to remotePath: String,
+        progress: (@Sendable (UInt64) -> Void)? = nil
+    ) async throws {
         guard let engine = activeEngine else {
             throw ADBError.deviceOffline(device: "unknown")
         }
-        // Read with .mappedIfSafe so the OS pages in only what the engine reads.
-        let data = try Data(contentsOf: localURL, options: .mappedIfSafe)
-        try await engine.writeFile(at: remotePath, data: data)
+
+        let didStartAccess = localURL.startAccessingSecurityScopedResource()
+        logger.info("pushFile: startAccessingSecurityScopedResource returned \(didStartAccess, privacy: .public) for \(localURL.path, privacy: .public)")
+        defer {
+            if didStartAccess {
+                localURL.stopAccessingSecurityScopedResource()
+                logger.debug("pushFile: stopped security-scoped access for \(localURL.path, privacy: .public)")
+            }
+        }
+
+        // Preflight at the AppState boundary too — this shows any difference
+        // between the "scope started" view of the file and the engine's view.
+        // If preflight here shows readable=true but the engine's preflight
+        // shows readable=false, we have an actor-hop ordering bug.
+        let preflight = FilePreflight.inspect(url: localURL)
+        FilePreflight.log(preflight, logger: logger)
+
+        _ = try await engine.writeFile(at: remotePath, from: localURL, progress: progress)
     }
 
-    /// Rename a file on the device (same directory, new filename only).
     func renameFile(at remotePath: String, to newName: String) async throws {
         guard let engine = activeEngine else {
             throw ADBError.deviceOffline(device: "unknown")

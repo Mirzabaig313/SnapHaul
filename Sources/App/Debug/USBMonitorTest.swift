@@ -37,11 +37,11 @@ enum USBMonitorTest {
             print("✅ DEVICE CONNECTED")
             print("   Name:         \(device.displayName)")
             print("   Manufacturer: \(device.manufacturer)")
-            print("   Model:        \(device.model)")
-            print("   Serial:       \(device.redactedSerial)")
-            print("   Engine:       \(device.engineType?.rawValue ?? "unknown")")
-            print("   USB Speed:    \(device.usbSpeedDescription ?? "unknown")")
-            print("   Status:       \(device.connectionStatus.rawValue)")
+            print("   VID:          \(String(format: "0x%04X", device.vendorID))")
+            print("   PID:          \(String(format: "0x%04X", device.productID))")
+            print("   Serial:       \(device.serialNumber.count > 4 ? "***" + String(device.serialNumber.suffix(4)) : "****")")
+            print("   USB Mode:     \(device.usbMode.rawValue)")
+            print("   USB Speed:    \(device.usbSpeed.description)")
             print()
         }
 
